@@ -470,6 +470,46 @@ impl ColumnSchema {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct Sequencer {
+    pub id: i16,
+    pub kafka_topic_id: i32,
+    pub kafka_partition: i32,
+    pub min_unpersisted_sequence_number: i64,
+}
+
+impl Sequencer {
+    async fn create(topic: &KafkaTopic, partition: i32, pool: &Pool<Postgres>) -> Result<Self> {
+        sqlx::query_as::<_, Self>(
+            r#"
+        INSERT INTO sequencer
+            ( kafka_topic_id, kafka_partition, min_unpersisted_sequence_number )
+        VALUES
+            ( $1, $2, 0 )
+        RETURNING *;
+        "#,
+        )
+        .bind(&topic.id) // $1
+        .bind(&partition) // $2
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if is_fk_violation(&e) {
+                Error::ForeignKeyViolation { source: e }
+            } else {
+                Error::SqlxError { source: e }
+            }
+        })
+    }
+
+    async fn list(pool: &Pool<Postgres>) -> Result<Vec<Self>> {
+        sqlx::query_as::<_, Self>(r#"SELECT * FROM sequencer;"#)
+            .fetch_all(pool)
+            .await
+            .context(SqlxSnafu)
+    }
+}
+
 /// The column data type
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ColumnType {
@@ -715,6 +755,7 @@ pub fn is_fk_violation(e: &sqlx::Error) -> bool {
 mod tests {
     use super::*;
     use crate::{SHARED_KAFKA_TOPIC, SHARED_QUERY_POOL};
+    use futures::{stream::FuturesOrdered, StreamExt};
     use influxdb_line_protocol::parse_lines;
     use std::env;
 
@@ -900,6 +941,35 @@ m1,new_tag=c new_field=1i 2
         assert_eq!(new_schema, schema);
     }
 
+    #[tokio::test]
+    async fn test_sequencers() {
+        maybe_skip_integration!();
+
+        let (pool, kafka_topic, _query_pool) = setup_db().await;
+        clear_schema(&pool).await;
+
+        // Create 10 sequencers
+        let created = (1..=10)
+            .map(|partition| Sequencer::create(&kafka_topic, partition, &pool))
+            .collect::<FuturesOrdered<_>>()
+            .map(|v| {
+                let v = v.expect("failed to create sequencer");
+                (v.id, v)
+            })
+            .collect::<BTreeMap<_, _>>()
+            .await;
+
+        // List them and assert they match
+        let listed = Sequencer::list(&pool)
+            .await
+            .expect("failed to list sequencers")
+            .into_iter()
+            .map(|v| (v.id, v))
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(created, listed);
+    }
+
     async fn clear_schema(pool: &Pool<Postgres>) {
         sqlx::query("delete from column_name;")
             .execute(pool)
@@ -910,6 +980,10 @@ m1,new_tag=c new_field=1i 2
             .await
             .unwrap();
         sqlx::query("delete from namespace;")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("delete from sequencer;")
             .execute(pool)
             .await
             .unwrap();
