@@ -134,7 +134,7 @@ dependencies = [
  "hashbrown",
  "num-traits",
  "rand",
- "snafu",
+ "snafu 0.6.10",
  "workspace-hack",
 ]
 
@@ -192,6 +192,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "atoi"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "616896e05fc0e2649463a93a15183c6a16bf03413a7af88ef1285ddedfa9cda5"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -608,6 +617,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49fc9a695bca7f35f5f4c15cddc84415f66a74ea78eef08e90c5024f2b540e23"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccaeedb56da03b09f598226e25e80088cb4cd25f316e6e4df7d695f0feeb1403"
+
+[[package]]
 name = "crc32fast"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -711,6 +735,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b979d76c9fcb84dffc80a73f7290da0f83e4c95773494674cb44b76d13a7a110"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -763,7 +797,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "siphasher",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "time 0.1.0",
  "uuid",
@@ -850,7 +884,7 @@ dependencies = [
  "rand_distr",
  "read_buffer",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "time 0.1.0",
  "tokio",
@@ -913,6 +947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30baa043103c9d0c2a57cf537cc2f35623889dc0d405e6c3cccfadbc81c71309"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -920,6 +963,17 @@ checksum = "b98cf8ebf19c3d1b223e151f99a4f9f0690dca41414773390fc824184ac833e1"
 dependencies = [
  "cfg-if",
  "dirs-sys-next",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03d86534ed367a67548dc68113a0f5db55432fdfbb6e6f9d77704397d95d5780"
+dependencies = [
+ "libc",
+ "redox_users",
+ "winapi",
 ]
 
 [[package]]
@@ -1147,6 +1201,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-intrusive"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62007592ac46aa7c2b6416f7deb9a8a8f63a01e0f1d6e1787d5630170db2b63e"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot",
+]
+
+[[package]]
 name = "futures-io"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1357,6 +1422,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7249a3129cbc1ffccd74857f81464a323a152173cdb134e0fd81bc803b29facf"
+dependencies = [
+ "hashbrown",
+]
+
+[[package]]
 name = "heappy"
 version = "0.1.0"
 source = "git+https://github.com/mkmik/heappy?rev=20aa466524ac9ce34a4bae29f27ec11869b50e21#20aa466524ac9ce34a4bae29f27ec11869b50e21"
@@ -1559,7 +1633,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "tokio",
  "url",
@@ -1638,7 +1712,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "server",
- "snafu",
+ "snafu 0.6.10",
  "structopt",
  "tempfile",
  "test_helpers",
@@ -1695,7 +1769,7 @@ dependencies = [
  "nom",
  "observability_deps",
  "smallvec",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "workspace-hack",
 ]
@@ -1721,7 +1795,7 @@ dependencies = [
  "integer-encoding 3.0.2",
  "observability_deps",
  "rand",
- "snafu",
+ "snafu 0.6.10",
  "snap",
  "test_helpers",
  "workspace-hack",
@@ -1760,6 +1834,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "iox_catalog"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dotenv",
+ "futures",
+ "influxdb_line_protocol",
+ "observability_deps",
+ "snafu 0.7.0",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "iox_data_generator"
 version = "0.1.0"
 dependencies = [
@@ -1778,7 +1867,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "tokio",
  "toml",
@@ -1796,7 +1885,7 @@ dependencies = [
  "futures",
  "object_store",
  "observability_deps",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "tokio",
  "tokio-stream",
@@ -2228,7 +2317,7 @@ dependencies = [
  "itertools",
  "rand",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "workspace-hack",
 ]
 
@@ -2241,7 +2330,7 @@ dependencies = [
  "influxdb_line_protocol",
  "mutable_batch",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "workspace-hack",
 ]
 
@@ -2256,7 +2345,7 @@ dependencies = [
  "mutable_batch",
  "mutable_batch_lp",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "workspace-hack",
 ]
 
@@ -2288,7 +2377,7 @@ dependencies = [
  "observability_deps",
  "parking_lot",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "workspace-hack",
 ]
@@ -2560,7 +2649,7 @@ dependencies = [
  "rusoto_core",
  "rusoto_credential",
  "rusoto_s3",
- "snafu",
+ "snafu 0.6.10",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -2665,7 +2754,7 @@ dependencies = [
  "parquet",
  "rand",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "workspace-hack",
 ]
@@ -2758,7 +2847,7 @@ dependencies = [
  "predicate",
  "prost",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "tempfile",
  "thrift",
  "time 0.1.0",
@@ -2794,7 +2883,7 @@ dependencies = [
  "predicate",
  "prost",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "tempfile",
  "test_helpers",
  "thrift",
@@ -2885,7 +2974,7 @@ dependencies = [
  "data_types",
  "internal_types",
  "observability_deps",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "time 0.1.0",
  "workspace-hack",
@@ -2931,7 +3020,7 @@ checksum = "54be6e404f5317079812fc8f9f5279de376d8856929e21c184ecf6bbd692a11d"
 dependencies = [
  "maplit",
  "pest",
- "sha-1",
+ "sha-1 0.8.2",
 ]
 
 [[package]]
@@ -3051,7 +3140,7 @@ dependencies = [
  "regex",
  "schema",
  "serde_json",
- "snafu",
+ "snafu 0.6.10",
  "sqlparser",
  "test_helpers",
  "tokio",
@@ -3218,7 +3307,7 @@ dependencies = [
  "predicate",
  "regex",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "tokio",
  "tokio-stream",
@@ -3243,7 +3332,7 @@ dependencies = [
  "predicate",
  "query",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "tempfile",
  "test_helpers",
  "tokio",
@@ -3409,7 +3498,7 @@ dependencies = [
  "rand",
  "rand_distr",
  "schema",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "workspace-hack",
 ]
@@ -3550,7 +3639,7 @@ dependencies = [
  "observability_deps",
  "parking_lot",
  "regex",
- "snafu",
+ "snafu 0.6.10",
  "time 0.1.0",
  "tokio",
  "trace",
@@ -3744,7 +3833,7 @@ dependencies = [
  "hashbrown",
  "indexmap",
  "itertools",
- "snafu",
+ "snafu 0.6.10",
  "workspace-hack",
 ]
 
@@ -3903,7 +3992,7 @@ dependencies = [
  "rand",
  "regex",
  "router",
- "snafu",
+ "snafu 0.6.10",
  "test_helpers",
  "time 0.1.0",
  "tokio",
@@ -3948,6 +4037,19 @@ dependencies = [
  "digest 0.8.1",
  "fake-simd",
  "opaque-debug 0.2.3",
+]
+
+[[package]]
+name = "sha-1"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99cd6713db3cf16b6c84e06321e049a9b9f699826e16096d23bbcc44d15d51a6"
+dependencies = [
+ "block-buffer 0.9.0",
+ "cfg-if",
+ "cpufeatures",
+ "digest 0.9.0",
+ "opaque-debug 0.3.0",
 ]
 
 [[package]]
@@ -4023,7 +4125,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eab12d3c261b2308b0d80c26fffb58d17eba81a4be97890101f416b478c79ca7"
 dependencies = [
  "doc-comment",
- "snafu-derive",
+ "snafu-derive 0.6.10",
+]
+
+[[package]]
+name = "snafu"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eba135d2c579aa65364522eb78590cdf703176ef71ad4c32b00f58f7afb2df5"
+dependencies = [
+ "doc-comment",
+ "snafu-derive 0.7.0",
 ]
 
 [[package]]
@@ -4032,6 +4144,18 @@ version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1508efa03c362e23817f96cde18abed596a25219a8b2c66e8db33c03543d315b"
 dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7fe9b0669ef117c5cabc5549638528f36771f058ff977d7689deb517833a75"
+dependencies = [
+ "heck",
  "proc-macro2",
  "quote",
  "syn",
@@ -4069,12 +4193,113 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlformat"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4b7922be017ee70900be125523f38bdd644f4f06a1b16e8fa5a8ee8c34bffd4"
+dependencies = [
+ "itertools",
+ "nom",
+ "unicode_categories",
+]
+
+[[package]]
 name = "sqlparser"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9907f54bd0f7b6ce72c2be1e570a614819ee08e3deb66d90480df341d8a12a8"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "sqlx"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7911b0031a0247af40095838002999c7a52fba29d9739e93326e71a5a1bc9d43"
+dependencies = [
+ "sqlx-core",
+ "sqlx-macros",
+]
+
+[[package]]
+name = "sqlx-core"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aec89bfaca8f7737439bad16d52b07f1ccd0730520d3bf6ae9d069fe4b641fb1"
+dependencies = [
+ "ahash",
+ "atoi",
+ "base64 0.13.0",
+ "bitflags",
+ "byteorder",
+ "bytes",
+ "crc",
+ "crossbeam-channel",
+ "crossbeam-queue",
+ "crossbeam-utils",
+ "dirs",
+ "either",
+ "futures-channel",
+ "futures-core",
+ "futures-intrusive",
+ "futures-util",
+ "hashlink",
+ "hex",
+ "hmac",
+ "indexmap",
+ "itoa",
+ "libc",
+ "log",
+ "md-5",
+ "memchr",
+ "once_cell",
+ "parking_lot",
+ "percent-encoding",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha-1 0.9.8",
+ "sha2",
+ "smallvec",
+ "sqlformat",
+ "sqlx-rt",
+ "stringprep",
+ "thiserror",
+ "tokio-stream",
+ "url",
+ "whoami",
+]
+
+[[package]]
+name = "sqlx-macros"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "584866c833511b1a152e87a7ee20dee2739746f60c858b3c5209150bc4b466f5"
+dependencies = [
+ "dotenv",
+ "either",
+ "heck",
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "sha2",
+ "sqlx-core",
+ "sqlx-rt",
+ "syn",
+ "url",
+]
+
+[[package]]
+name = "sqlx-rt"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8061cbaa91ee75041514f67a09398c65a64efed72c90151ecd47593bad53da99"
+dependencies = [
+ "native-tls",
+ "once_cell",
+ "tokio",
+ "tokio-native-tls",
 ]
 
 [[package]]
@@ -4100,6 +4325,16 @@ name = "str_stack"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9091b6114800a5f2141aee1d1b9d6ca3592ac062dc5decb3764ec5895a47b4eb"
+
+[[package]]
+name = "stringprep"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ee348cb74b87454fff4b551cbf727025810a004f88aeacae7f85b87f4e9a1c1"
+dependencies = [
+ "unicode-bidi",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "strsim"
@@ -4583,7 +4818,7 @@ dependencies = [
  "chrono",
  "futures",
  "observability_deps",
- "snafu",
+ "snafu 0.6.10",
  "structopt",
  "thrift",
  "tokio",
@@ -4604,7 +4839,7 @@ dependencies = [
  "observability_deps",
  "parking_lot",
  "pin-project",
- "snafu",
+ "snafu 0.6.10",
  "tower",
  "trace",
  "workspace-hack",
@@ -4776,6 +5011,12 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+
+[[package]]
+name = "unicode_categories"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 
 [[package]]
 name = "untrusted"
@@ -4979,6 +5220,16 @@ dependencies = [
  "either",
  "lazy_static",
  "libc",
+]
+
+[[package]]
+name = "whoami"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "524b58fa5a20a2fb3014dd6358b70e6579692a56ef6fce928834e488f42f65e8"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
