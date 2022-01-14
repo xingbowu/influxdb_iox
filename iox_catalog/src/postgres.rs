@@ -50,7 +50,7 @@ const SCHEMA_NAME: &str = "iox_catalog";
 pub async fn connect_catalog_store(
     app_name: &'static str,
     schema_name: &'static str,
-    dsn: &'static str,
+    dsn: &str,
 ) -> Result<Pool<Postgres>, sqlx::Error> {
     let pool = PgPoolOptions::new()
         .min_connections(1)
@@ -723,9 +723,7 @@ mod tests {
         () => {{
             dotenv::dotenv().ok();
 
-            let required_vars = [
-                "DATABASE_URL",
-            ];
+            let required_vars = ["DATABASE_URL"];
             let unset_vars: Vec<_> = required_vars
                 .iter()
                 .filter_map(|&name| match env::var(name) {
@@ -757,11 +755,11 @@ mod tests {
         }};
     }
 
-    const DSN: &str = "postgres://postgres@localhost/iox_shared";
-
     async fn setup_db() -> (Pool<Postgres>, KafkaTopic, QueryPool) {
-        // std::env::var("TEST_DATABASE_URL").unwrap()
-        let pool = connect_catalog_store("test", SCHEMA_NAME, &DSN).await.unwrap();
+        let dsn = std::env::var("DATABASE_URL").unwrap();
+        let pool = connect_catalog_store("test", SCHEMA_NAME, &dsn)
+            .await
+            .unwrap();
         let kafka_topic = KafkaTopic::create_or_get(SHARED_KAFKA_TOPIC, &pool)
             .await
             .unwrap();
