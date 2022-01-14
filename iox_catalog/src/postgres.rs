@@ -2,14 +2,14 @@
 
 use crate::TIME_COLUMN;
 use influxdb_line_protocol::{FieldValue, ParsedLine};
+use observability_deps::tracing::info;
 use snafu::{ResultExt, Snafu};
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Executor};
+use sqlx::{postgres::PgPoolOptions, Executor, Pool, Postgres};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fmt::Formatter;
 use std::sync::Arc;
 use std::time::Duration;
-use observability_deps::tracing::info;
 
 #[derive(Debug, Snafu)]
 #[allow(missing_copy_implementations, missing_docs)]
@@ -61,10 +61,10 @@ pub async fn connect_catalog_store(
         .after_connect(move |c| {
             Box::pin(async move {
                 // Tag the connection with the provided application name.
-                c.execute(sqlx::query("SET application_name = '$1';").bind(app_name)).await?;
-                let search_path_query = format!("SET search_path TO {}", schema_name);
-                c.execute(sqlx::query(&search_path_query))
+                c.execute(sqlx::query("SET application_name = '$1';").bind(app_name))
                     .await?;
+                let search_path_query = format!("SET search_path TO {}", schema_name);
+                c.execute(sqlx::query(&search_path_query)).await?;
 
                 Ok(())
             })
@@ -111,10 +111,7 @@ struct QueryPool {
 }
 
 impl QueryPool {
-    async fn create_or_get(
-        name: &str,
-        pool: &Pool<Postgres>,
-    ) -> Result<QueryPool> {
+    async fn create_or_get(name: &str, pool: &Pool<Postgres>) -> Result<QueryPool> {
         let rec = sqlx::query_as::<_, QueryPool>(
             r#"
 INSERT INTO query_pool ( name )
