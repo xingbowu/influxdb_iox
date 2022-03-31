@@ -141,6 +141,7 @@ pub enum Format {
 /// All possible subcommands for storage
 #[derive(Debug, clap::Parser)]
 enum Command {
+    Capabilities,
     ReadFilter,
     ReadWindowAggregate(ReadWindowAggregate),
     TagValues(TagValues),
@@ -189,6 +190,10 @@ pub async fn command(connection: Connection, config: Config) -> Result<()> {
     let source = Client::read_source(&config.db_name, 0);
     let now = std::time::Instant::now();
     match config.command {
+        Command::Capabilities => {
+            let result = client.capabilities().await.context(ServerSnafu)?;
+            println!("{:?}", result);
+        }
         Command::ReadFilter => {
             let result = client
                 .read_filter(request::read_filter(
