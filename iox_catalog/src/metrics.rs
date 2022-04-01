@@ -257,6 +257,7 @@ decorate!(
         "tombstone_list_tombstones_by_sequencer_greater_than" = list_tombstones_by_sequencer_greater_than(&mut self, sequencer_id: SequencerId, sequence_number: SequenceNumber) -> Result<Vec<Tombstone>>;
         "tombstone_remove" =  remove(&mut self, tombstone_ids: &[TombstoneId]) -> Result<()>;
         "tombstone_list_tombstones_for_time_range" = list_tombstones_for_time_range(&mut self, sequencer_id: SequencerId, table_id: TableId, sequence_number: SequenceNumber, min_time: Timestamp, max_time: Timestamp) -> Result<Vec<Tombstone>>;
+        "tombstone_list_by_sequencer" = list_by_sequencer(&mut self, sequnecer_id: SequencerId) -> Result<Vec<Tombstone>>;
     ]
 );
 
@@ -276,6 +277,7 @@ decorate!(
         "parquet_exist" = exist(&mut self, id: ParquetFileId) -> Result<bool>;
         "parquet_count" = count(&mut self) -> Result<i64>;
         "parquet_count_by_overlaps" = count_by_overlaps(&mut self, table_id: TableId, sequencer_id: SequencerId, min_time: Timestamp, max_time: Timestamp, sequence_number: SequenceNumber) -> Result<i64>;
+        "parquet_list_by_tombstone" = list_by_tombstone(&mut self, tombstone: Tombstone) -> Result<Vec<ParquetFile>>;
     ]
 );
 

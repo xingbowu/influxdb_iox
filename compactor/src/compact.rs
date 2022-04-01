@@ -1,7 +1,7 @@
 //! Data Points for the lifecycle of the Compactor
 
 use crate::handler::CompactorConfig;
-use crate::utils::GroupWithMinTimeAndSize;
+use crate::utils::{GroupWithMinTimeAndSize, PartitionWithParquetFiles};
 use crate::{
     query::QueryableParquetChunk,
     utils::{CatalogUpdate, CompactedData, GroupWithTombstones, ParquetFileWithTombstone},
@@ -354,6 +354,77 @@ impl Compactor {
         );
 
         Ok(candidates)
+    }
+
+    /// Compact files for available tombstones
+    /// Return a list of partitions with tombstones-attached parquet files to be compacted
+    pub async fn partitions_with_files_to_compact(&self) -> Result<Vec<PartitionWithParquetFiles>> {
+        let mut repos = self.catalog.repositories().await;
+
+        // Note: There are many loops in this function. If they are slow,
+        // we can easily run them in many threads
+        let mut partitions: Vec<PartitionWithParquetFiles> = vec![];
+        for sequencer_id in &self.sequencers {
+
+            // Read tombstones
+            // Note: if we think there are a lot of deletes per sequencer, we read tables per sequencer first
+            // then read tombsotnes for each table but it may be more expensive that way if there are a lot of
+            // tables and most of them have no tombstones
+            let tombstones = repos
+                .tombstones()
+                .list_by_sequencer(sequencer_id)
+                .await
+                .context(Level0Snafu);
+            
+            //  Group by table
+            let table_tombstones = tombstones
+                .iter()
+                .map(|ts| (ts.table_id, ts))
+                .collect::<BTreeMap<TableId, Vec<Tombstone>>>();
+            
+            for (table_id, tombstones) in table_tombstones {
+                let mut parquet_file_with_tombstones : BTreeMap<ParquetFileId, ParquetFileWithTombstone> =  BTreeMap::new();
+                for ts in tombstones {
+                    // Read parquet files that are not soft deleted, not tombstone-processed, same table and 
+                    // overlaps with this tombstone
+                    let parquet_files: Vec<ParquetFile> = vec![]; // Todo
+
+                    // Attach this tombstone to all parquet files and add it to the parquet_file_with_tombstones if not yet
+                    for pf in parquet_files {
+                        let file = parquet_file_with_tombstones
+                            .entry(pf.id)
+                            .or_insert_with(|| ParquetFileWithTombstone {
+                                data: Arc::new(pf),
+                                tombstones: vec![],
+                            });
+                        file.add_tombstones(vec![ts.clone()]);            
+                    } 
+                }
+
+                // Group parquet_file_with_tombstones into partition and add it into the partitions
+                let mut table_partittions: BTreeMap<PartitionId, Vec<ParquetFileWithTombstone>> = BTreeMap::new();
+                for  (_, pf) in parquet_file_with_tombstones {
+                    let list = table_partittions
+                        .entry(pf.data.partition_id)
+                        .or_insert_with(|| vec![]);
+                    list.push(pf);
+                }
+
+                let ps = table_partittions
+                    .into_iter()
+                    .map(|(partition_id, files_with_tombstones)| PartitionWithParquetFiles {
+                        sequencer_id: *sequencer_id,
+                        table_id,
+                        partition_id,
+                        files_with_tombstones,
+                    })
+                    .collect::<Vec<_>>();
+
+                partitions.extend(ps);
+            }
+        }
+
+        Ok(partitions)
     }
 
     /// Runs compaction in a partition resolving any tombstones and compacting data so that parquet

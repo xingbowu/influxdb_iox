@@ -1268,6 +1268,20 @@ RETURNING *;
         Ok(v)
     }
 
+    async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Tombstone>> {
+        sqlx::query_as::<_, Tombstone>(
+            r#"
+SELECT *
+FROM tombstone
+WHERE sequencer_id = $1;
+            "#,
+        )
+        .bind(&sequencer_id) // $1
+        .fetch_all(&mut self.inner)
+        .await
+        .map_err(|e| Error::SqlxError { source: e })
+    }
+
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Tombstone>> {
         sqlx::query_as::<_, Tombstone>(
             r#"
@@ -1594,6 +1608,35 @@ WHERE parquet_file.sequencer_id = $1
         .bind(&table_partition.partition_id) // $3
         .bind(min_time) // $4
         .bind(max_time) // $5
+        .fetch_all(&mut self.inner)
+        .await
+        .map_err(|e| Error::SqlxError { source: e })
+    }
+
+    async fn list_by_tombstone(&mut self, tombstone: Tombstone) -> Result<Vec<ParquetFile>> {
+        sqlx::query_as::<_, ParquetFile>(
+            r#"
+SELECT *
+FROM parquet_file
+WHERE parquet_file.sequencer_id = $1
+  AND parquet_file.table_id = $2
+  AND parquet_file.max_sequence_number < $3
+  AND parquet_file.to_delete IS NULL
+  AND ((parquet_file.min_time <= $4 AND parquet_file.max_time >= $4)
+      OR (parquet_file.min_time > $4 AND parquet_file.min_time <= $5))
+  AND id NOT IN (
+      SELECT parquet_file_id
+      FROM processed_tombstone
+      WHERE tombstone_id = $6
+  );
+        "#,
+        )
+        .bind(&tombstone.sequencer_id) // $1
+        .bind(&tombstone.table_id) // $2
+        .bind(&tombstone.sequence_number) // $3
+        .bind(&tombstone.min_time) // $4
+        .bind(&tombstone.max_time) // $5
+        .bind(&tombstone.id) // $6
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })

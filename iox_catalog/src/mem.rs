@@ -815,6 +815,18 @@ impl TombstoneRepo for MemTxn {
         Ok(tombstone.clone())
     }
 
+    async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Tombstone>> {
+        let stage = self.stage();
+
+        let tombstones: Vec<_> = stage
+            .tombstones
+            .iter()
+            .filter(|t| t.sequencer_id == sequencer_id)
+            .cloned()
+            .collect();
+        Ok(tombstones)
+    }
+
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Tombstone>> {
         let stage = self.stage();
 
@@ -1067,6 +1079,12 @@ impl ParquetFileRepo for MemTxn {
             })
             .cloned()
             .collect())
+    }
+
+    async fn list_by_tombstone(&mut self, tombstone: Tombstone) -> Result<Vec<ParquetFile>> {
+        // TODO
+
+        Ok(vec![])
     }
 
     async fn list_by_partition_not_to_delete(

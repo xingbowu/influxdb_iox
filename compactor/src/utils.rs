@@ -3,7 +3,7 @@
 use crate::query::QueryableParquetChunk;
 use arrow::record_batch::RecordBatch;
 use data_types2::{
-    ParquetFile, ParquetFileId, ParquetFileParams, Timestamp, Tombstone, TombstoneId,
+    ParquetFile, ParquetFileId, ParquetFileParams, Timestamp, Tombstone, TombstoneId, SequencerId, TableId, PartitionId,
 };
 use iox_object_store::IoxObjectStore;
 use object_store::DynObjectStore;
@@ -157,4 +157,13 @@ impl CatalogUpdate {
             parquet_file,
         }
     }
+}
+
+/// Partition with all tombstones-attched parquet files to be compacted
+#[derive(Debug)]
+pub struct PartitionWithParquetFiles {
+    pub(crate) sequencer_id: SequencerId,
+    pub(crate) table_id: TableId,
+    pub(crate) partition_id: PartitionId,
+    pub(crate) files_with_tombstones: Vec<ParquetFileWithTombstone>,
 }
