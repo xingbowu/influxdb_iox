@@ -3,6 +3,7 @@ use std::{any::Any, fmt::Debug, hash::Hash};
 mod addressable_heap;
 pub mod dual;
 pub mod hash_map;
+pub mod shared;
 pub mod ttl;
 
 #[cfg(test)]
