@@ -449,7 +449,6 @@ pub trait TombstoneRepo: Send + Sync {
     /// Used during compaction cold partitions
     async fn list_by_sequencer(&mut self, sequnecer_id: SequencerId) -> Result<Vec<Tombstone>>;
 
-
     /// list all tombstones for a given namespace
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Tombstone>>;
 
@@ -539,7 +538,7 @@ pub trait ParquetFileRepo: Send + Sync {
         max_time: Timestamp,
     ) -> Result<Vec<ParquetFile>>;
 
-    /// List parquet files that are not soft deleted, not tombstone-processed, same table, 
+    /// List parquet files that are not soft deleted, not tombstone-processed, same table,
     /// overlaps with the given tombstone and written before the tomsbtones
     async fn list_by_tombstone(&mut self, tombstone: Tombstone) -> Result<Vec<ParquetFile>>;
 

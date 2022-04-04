@@ -159,6 +159,16 @@ pub enum Error {
 
     #[snafu(display("Error joining compaction tasks: {}", source))]
     CompactionJoin { source: tokio::task::JoinError },
+
+    #[snafu(display("Error getting tombstones for sequencer: {}", source))]
+    ListTombstones {
+        source: iox_catalog::interface::Error,
+    },
+
+    #[snafu(display("Error getting parquet files for tombstone: {}", source))]
+    ListParquetFilesByTombstone {
+        source: iox_catalog::interface::Error,
+    },
 }
 
 /// A specialized `Error` for Compactor Data errors
@@ -365,29 +375,42 @@ impl Compactor {
         // we can easily run them in many threads
         let mut partitions: Vec<PartitionWithParquetFiles> = vec![];
         for sequencer_id in &self.sequencers {
-
             // Read tombstones
             // Note: if we think there are a lot of deletes per sequencer, we read tables per sequencer first
             // then read tombsotnes for each table but it may be more expensive that way if there are a lot of
             // tables and most of them have no tombstones
             let tombstones = repos
                 .tombstones()
-                .list_by_sequencer(sequencer_id)
+                .list_by_sequencer(*sequencer_id)
                 .await
-                .context(Level0Snafu);
-            
+                .context(ListTombstonesSnafu)?;
+
             //  Group by table
-            let table_tombstones = tombstones
-                .iter()
-                .map(|ts| (ts.table_id, ts))
-                .collect::<BTreeMap<TableId, Vec<Tombstone>>>();
-            
+            let mut table_tombstones: BTreeMap<TableId, Vec<Tombstone>> = BTreeMap::new();
+            for ts in tombstones {
+                let tss = table_tombstones
+                    .entry(ts.table_id)
+                    .or_insert_with(Vec::new);
+                tss.push(ts);
+            }
+
             for (table_id, tombstones) in table_tombstones {
-                let mut parquet_file_with_tombstones : BTreeMap<ParquetFileId, ParquetFileWithTombstone> =  BTreeMap::new();
+                let mut parquet_file_with_tombstones: BTreeMap<
+                    ParquetFileId,
+                    ParquetFileWithTombstone,
+                > = BTreeMap::new();
                 for ts in tombstones {
-                    // Read parquet files that are not soft deleted, not tombstone-processed, same table and 
+                    // Read parquet files that are not soft deleted, not tombstone-processed, same table and
                     // overlaps with this tombstone
-                    let parquet_files: Vec<ParquetFile> = vec![]; // Todo
+                    // TODO - QUESTIONS:
+                    //    1. Should we only read level-1 files only (right now, we read all files that overlap with the tombstone)?
+                    //    2. Need to handle the case that one or many of these files are also included in other background cycle
+                    //       that compact hot partitions.
+                    let parquet_files = repos
+                        .parquet_files()
+                        .list_by_tombstone(ts.clone())
+                        .await
+                        .context(ListParquetFilesByTombstoneSnafu)?;
 
                     // Attach this tombstone to all parquet files and add it to the parquet_file_with_tombstones if not yet
                     for pf in parquet_files {
@@ -397,27 +420,30 @@ impl Compactor {
                                 data: Arc::new(pf),
                                 tombstones: vec![],
                             });
-                        file.add_tombstones(vec![ts.clone()]);            
-                    } 
+                        file.add_tombstones(vec![ts.clone()]);
+                    }
                 }
 
                 // Group parquet_file_with_tombstones into partition and add it into the partitions
-                let mut table_partittions: BTreeMap<PartitionId, Vec<ParquetFileWithTombstone>> = BTreeMap::new();
-                for  (_, pf) in parquet_file_with_tombstones {
+                let mut table_partittions: BTreeMap<PartitionId, Vec<ParquetFileWithTombstone>> =
+                    BTreeMap::new();
+                for (_, pf) in parquet_file_with_tombstones {
                     let list = table_partittions
                         .entry(pf.data.partition_id)
-                        .or_insert_with(|| vec![]);
+                        .or_insert_with(Vec::new);
                     list.push(pf);
                 }
 
                 let ps = table_partittions
                     .into_iter()
-                    .map(|(partition_id, files_with_tombstones)| PartitionWithParquetFiles {
-                        sequencer_id: *sequencer_id,
-                        table_id,
-                        partition_id,
-                        files_with_tombstones,
-                    })
+                    .map(
+                        |(partition_id, files_with_tombstones)| PartitionWithParquetFiles {
+                            sequencer_id: *sequencer_id,
+                            table_id,
+                            partition_id,
+                            files_with_tombstones,
+                        },
+                    )
                     .collect::<Vec<_>>();
 
                 partitions.extend(ps);

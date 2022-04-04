@@ -1082,9 +1082,26 @@ impl ParquetFileRepo for MemTxn {
     }
 
     async fn list_by_tombstone(&mut self, tombstone: Tombstone) -> Result<Vec<ParquetFile>> {
-        // TODO
+        let stage = self.stage();
 
-        Ok(vec![])
+        Ok(stage
+            .parquet_files
+            .iter()
+            .filter(|f| {
+                f.sequencer_id == tombstone.sequencer_id
+                    && f.table_id == tombstone.table_id
+                    && f.max_sequence_number < tombstone.sequence_number
+                    && f.to_delete.is_none()
+                    && ((f.min_time <= tombstone.min_time && f.max_time >= tombstone.min_time)
+                        || (f.min_time > tombstone.min_time && f.min_time <= tombstone.max_time))
+                    && (!stage
+                        .processed_tombstones
+                        .iter()
+                        .filter(|pt| pt.tombstone_id == tombstone.id)
+                        .any(|pt| pt.parquet_file_id == f.id))
+            })
+            .cloned()
+            .collect::<Vec<_>>())
     }
 
     async fn list_by_partition_not_to_delete(

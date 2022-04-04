@@ -3,7 +3,8 @@
 use crate::query::QueryableParquetChunk;
 use arrow::record_batch::RecordBatch;
 use data_types2::{
-    ParquetFile, ParquetFileId, ParquetFileParams, Timestamp, Tombstone, TombstoneId, SequencerId, TableId, PartitionId,
+    ParquetFile, ParquetFileId, ParquetFileParams, PartitionId, SequencerId, TableId, Timestamp,
+    Tombstone, TombstoneId,
 };
 use iox_object_store::IoxObjectStore;
 use object_store::DynObjectStore;
