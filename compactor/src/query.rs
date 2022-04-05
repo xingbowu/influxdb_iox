@@ -3,12 +3,17 @@
 use std::sync::Arc;
 
 use data_types2::{
-    tombstones_to_delete_predicates, ChunkAddr, ChunkId, ChunkOrder, DeletePredicate,
-    SequenceNumber, TableSummary, Tombstone,
+    tombstones_to_delete_predicates, ChunkAddr, ChunkId, ChunkOrder, DeletePredicate, ParquetFile,
+    ParquetFileWithTombstone, SequenceNumber, TableSummary, Tombstone,
 };
 use datafusion::physical_plan::SendableRecordBatchStream;
+use iox_object_store::IoxObjectStore;
+use object_store::DynObjectStore;
 use observability_deps::tracing::trace;
-use parquet_file::{chunk::ParquetChunk, metadata::IoxMetadata};
+use parquet_file::{
+    chunk::{new_parquet_chunk, ChunkMetrics, DecodedParquetFile, ParquetChunk},
+    metadata::IoxMetadata,
+};
 use predicate::{Predicate, PredicateMatch};
 use query::{
     exec::{stringset::StringSet, IOxSessionContext},
@@ -88,6 +93,39 @@ impl QueryableParquetChunk {
     /// Return max time
     pub fn max_time(&self) -> i64 {
         self.iox_metadata.time_of_last_write.timestamp_nanos()
+    }
+
+    /// Convert to a QueryableParquetChunk
+    pub fn from_parquet_file_with_tombstones(
+        object_store: Arc<DynObjectStore>,
+        table_name: String,
+        parquet_file_with_tobstones: &ParquetFileWithTombstone,
+    ) -> Self {
+        let decoded_parquet_file =
+            DecodedParquetFile::new((*parquet_file_with_tobstones.data).clone());
+        let root_path = IoxObjectStore::root_path_for(
+            &*object_store,
+            parquet_file_with_tobstones.data.object_store_id,
+        );
+        let iox_object_store = IoxObjectStore::existing(object_store, root_path);
+        let parquet_chunk = new_parquet_chunk(
+            &decoded_parquet_file,
+            ChunkMetrics::new_unregistered(), // TODO: need to add metrics
+            Arc::new(iox_object_store),
+        );
+
+        Self::new(
+            table_name,
+            Arc::new(parquet_chunk),
+            Arc::new(decoded_parquet_file.iox_metadata),
+            &parquet_file_with_tobstones.tombstones,
+        )
+    }
+
+    /// Return iox metadata for  given parquet file
+    pub fn iox_metadata(parquet_file: ParquetFile) -> IoxMetadata {
+        let decoded_parquet_file = DecodedParquetFile::new(parquet_file);
+        decoded_parquet_file.iox_metadata
     }
 }
 

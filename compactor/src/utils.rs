@@ -1,17 +1,11 @@
 //! Helpers of the Compactor
 
-use crate::query::QueryableParquetChunk;
 use arrow::record_batch::RecordBatch;
 use data_types2::{
-    FileMeta, ParquetFile, ParquetFileId, ParquetFileParams, PartitionId, SequenceNumber,
-    SequencerId, TableId, Timestamp, Tombstone, TombstoneId,
+    FileMeta, ParquetFileParams, ParquetFileWithTombstone, PartitionId, SequencerId, TableId,
+    Timestamp, Tombstone, TombstoneId,
 };
-use iox_object_store::IoxObjectStore;
-use object_store::DynObjectStore;
-use parquet_file::{
-    chunk::{new_parquet_chunk, ChunkMetrics, DecodedParquetFile},
-    metadata::{IoxMetadata, IoxParquetMetaData},
-};
+use parquet_file::metadata::{IoxMetadata, IoxParquetMetaData};
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -27,6 +21,30 @@ pub struct GroupWithTombstones {
 }
 
 impl GroupWithTombstones {
+    /// create from parquet files with tombstones
+    pub fn new_from_parquet_files_with_tombstones(
+        parquet_files: Vec<ParquetFileWithTombstone>,
+    ) -> Self {
+        let mut result = Self {
+            parquet_files,
+            tombstones: vec![],
+        };
+
+        // Build tombstones
+        for file in &result.parquet_files {
+            let tss = &file.tombstones;
+            let to_add = tss
+                .iter()
+                .filter(|ts| !result.tombstones.iter().any(|t| t.id == ts.id))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            result.tombstones.extend(to_add);
+        }
+
+        result
+    }
+
     /// Return all tombstone ids
     pub fn tombstone_ids(&self) -> HashSet<TombstoneId> {
         self.tombstones.iter().map(|t| t.id).collect()
@@ -47,107 +65,6 @@ where
 
     /// total size of all file
     pub(crate) total_file_size_bytes: i64,
-}
-
-/// Wrapper of a parquet file and its tombstones
-#[allow(missing_docs)]
-#[derive(Debug, Clone)]
-pub struct ParquetFileWithTombstone {
-    pub(crate) data: Arc<ParquetFile>,
-    pub(crate) tombstones: Vec<Tombstone>,
-}
-
-impl FileMeta for ParquetFileWithTombstone {
-    fn sequencer_id(&self) -> SequencerId {
-        self.data.sequencer_id
-    }
-
-    fn table_id(&self) -> TableId {
-        self.data.table_id
-    }
-
-    fn min_time(&self) -> Timestamp {
-        self.data.min_time
-    }
-
-    fn max_time(&self) -> Timestamp {
-        self.data.max_time
-    }
-
-    fn file_size_bytes(&self) -> i64 {
-        self.data.file_size_bytes
-    }
-
-    fn max_sequence_number(&self) -> SequenceNumber {
-        self.data.max_sequence_number
-    }
-
-    fn parquet_file(&self) -> ParquetFile {
-        (*self.data).clone()
-    }
-
-    fn tombstones_attached(&self) -> bool {
-        true
-    }
-}
-
-impl ParquetFileWithTombstone {
-    /// Return all tombstone ids
-    pub fn tombstone_ids(&self) -> HashSet<TombstoneId> {
-        self.tombstones.iter().map(|t| t.id).collect()
-    }
-
-    /// Return true if there is no tombstone
-    pub fn no_tombstones(&self) -> bool {
-        self.tombstones.is_empty()
-    }
-
-    /// Return id of this parquet file
-    pub fn parquet_file_id(&self) -> ParquetFileId {
-        self.data.id
-    }
-
-    /// Return all tombstones in btree map format
-    pub fn tombstones(&self) -> BTreeMap<TombstoneId, Tombstone> {
-        self.tombstones
-            .iter()
-            .map(|ts| (ts.id, ts.clone()))
-            .collect()
-    }
-
-    /// Add more tombstones
-    pub fn add_tombstones(&mut self, tombstones: Vec<Tombstone>) {
-        self.tombstones.extend(tombstones);
-    }
-
-    /// Convert to a QueryableParquetChunk
-    pub fn to_queryable_parquet_chunk(
-        &self,
-        object_store: Arc<DynObjectStore>,
-        table_name: String,
-    ) -> QueryableParquetChunk {
-        let decoded_parquet_file = DecodedParquetFile::new((*self.data).clone());
-        let root_path = IoxObjectStore::root_path_for(&*object_store, self.data.object_store_id);
-        let iox_object_store = IoxObjectStore::existing(object_store, root_path);
-        let parquet_chunk = new_parquet_chunk(
-            &decoded_parquet_file,
-            ChunkMetrics::new_unregistered(), // TODO: need to add metrics
-            Arc::new(iox_object_store),
-        );
-
-        QueryableParquetChunk::new(
-            table_name,
-            Arc::new(parquet_chunk),
-            Arc::new(decoded_parquet_file.iox_metadata),
-            &self.tombstones,
-        )
-    }
-
-    /// Return iox metadata of the parquet file
-    pub fn iox_metadata(&self) -> IoxMetadata {
-        let decoded_parquet_file = DecodedParquetFile::new((*self.data).clone());
-        decoded_parquet_file.iox_metadata
-    }
 }
 
 /// Struct holding output of a compacted stream

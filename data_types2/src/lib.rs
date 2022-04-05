@@ -14,7 +14,7 @@ use influxdb_line_protocol::FieldValue;
 use predicate::{delete_predicate::parse_delete_predicate, Predicate};
 use schema::{builder::SchemaBuilder, InfluxColumnType, InfluxFieldType, Schema};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     convert::TryFrom,
     fmt::{Debug, Formatter},
     ops::{Add, Sub},
@@ -732,8 +732,8 @@ pub trait FileMeta: Sync + Send + Clone + std::fmt::Debug + 'static {
     /// Return true if there are already tombstones
     fn tombstones_attached(&self) -> bool;
 
-    // Return the parquet file with tombstones
-    //fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone;
+    /// Return the parquet file with tombstones
+    fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone;
 }
 
 impl<P> FileMeta for Arc<P>
@@ -780,8 +780,10 @@ where
         self.as_ref().tombstones_attached()
     }
 
-    // Return the parquet file with tombstones
-    // fn parquet
+    /// Return the parquet file with tombstones
+    fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone {
+        self.as_ref().parquet_files_with_timbstone()
+    }
 }
 
 /// Data for a parquet file reference that has been inserted in the catalog.
@@ -853,6 +855,13 @@ impl FileMeta for ParquetFile {
     fn tombstones_attached(&self) -> bool {
         false
     }
+
+    fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone {
+        ParquetFileWithTombstone {
+            data: Arc::new((*self).clone()),
+            tombstones: vec![],
+        }
+    }
 }
 
 /// Data for a parquet file to be inserted into the catalog.
@@ -886,6 +895,82 @@ pub struct ParquetFileParams {
     pub compaction_level: i16,
     /// the creation time of the parquet file
     pub created_at: Timestamp,
+}
+
+/// Wrapper of a parquet file and its tombstones
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub struct ParquetFileWithTombstone {
+    pub data: Arc<ParquetFile>,
+    pub tombstones: Vec<Tombstone>,
+}
+
+impl FileMeta for ParquetFileWithTombstone {
+    fn sequencer_id(&self) -> SequencerId {
+        self.data.sequencer_id
+    }
+
+    fn table_id(&self) -> TableId {
+        self.data.table_id
+    }
+
+    fn min_time(&self) -> Timestamp {
+        self.data.min_time
+    }
+
+    fn max_time(&self) -> Timestamp {
+        self.data.max_time
+    }
+
+    fn file_size_bytes(&self) -> i64 {
+        self.data.file_size_bytes
+    }
+
+    fn max_sequence_number(&self) -> SequenceNumber {
+        self.data.max_sequence_number
+    }
+
+    fn parquet_file(&self) -> ParquetFile {
+        (*self.data).clone()
+    }
+
+    fn tombstones_attached(&self) -> bool {
+        true
+    }
+
+    fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone {
+        (*self).clone()
+    }
+}
+
+impl ParquetFileWithTombstone {
+    /// Return all tombstone ids
+    pub fn tombstone_ids(&self) -> HashSet<TombstoneId> {
+        self.tombstones.iter().map(|t| t.id).collect()
+    }
+
+    /// Return true if there is no tombstone
+    pub fn no_tombstones(&self) -> bool {
+        self.tombstones.is_empty()
+    }
+
+    /// Return id of this parquet file
+    pub fn parquet_file_id(&self) -> ParquetFileId {
+        self.data.id
+    }
+
+    /// Return all tombstones in btree map format
+    pub fn tombstones(&self) -> BTreeMap<TombstoneId, Tombstone> {
+        self.tombstones
+            .iter()
+            .map(|ts| (ts.id, ts.clone()))
+            .collect()
+    }
+
+    /// Add more tombstones
+    pub fn add_tombstones(&mut self, tombstones: Vec<Tombstone>) {
+        self.tombstones.extend(tombstones);
+    }
 }
 
 /// Data for a processed tombstone reference in the catalog.

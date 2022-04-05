@@ -4,14 +4,14 @@ use crate::handler::CompactorConfig;
 use crate::utils::{GroupWithMinTimeAndSize, PartitionWithParquetFiles};
 use crate::{
     query::QueryableParquetChunk,
-    utils::{CatalogUpdate, CompactedData, GroupWithTombstones, ParquetFileWithTombstone},
+    utils::{CatalogUpdate, CompactedData, GroupWithTombstones},
 };
 use arrow::record_batch::RecordBatch;
 use backoff::{Backoff, BackoffConfig};
 use bytes::Bytes;
 use data_types2::{
-    FileMeta, ParquetFile, ParquetFileId, PartitionId, SequencerId, TableId, TablePartition,
-    Timestamp, Tombstone, TombstoneId,
+    FileMeta, ParquetFile, ParquetFileId, ParquetFileWithTombstone, PartitionId, SequencerId,
+    TableId, TablePartition, Timestamp, Tombstone, TombstoneId,
 };
 use datafusion::error::DataFusionError;
 use iox_catalog::interface::{Catalog, Transaction};
@@ -637,7 +637,7 @@ impl Compactor {
         }
 
         // Keep the fist IoxMetadata to reuse same IDs and names
-        let iox_metadata = overlapped_files[0].iox_metadata();
+        let iox_metadata = QueryableParquetChunk::iox_metadata((*overlapped_files[0].data).clone());
 
         //  Collect all unique tombstone
         let mut tombstone_map = overlapped_files[0].tombstones();
@@ -670,9 +670,10 @@ impl Compactor {
         let query_chunks: Vec<_> = overlapped_files
             .iter()
             .map(|f| {
-                f.to_queryable_parquet_chunk(
+                QueryableParquetChunk::from_parquet_file_with_tombstones(
                     Arc::clone(&self.object_store),
                     iox_metadata.table_name.to_string(),
+                    f,
                 )
             })
             .collect();
@@ -1101,7 +1102,16 @@ impl Compactor {
                     parquet_files,
                     tombstones,
                 });
-            } else { // already has tombstones attached to
+            } else {
+                // Already has tombstones attached to the parquet files, use them
+                let group = GroupWithTombstones::new_from_parquet_files_with_tombstones(
+                    parquet_files
+                        .iter()
+                        .map(|f| f.parquet_files_with_timbstone())
+                        .collect::<Vec<_>>(),
+                );
+
+                overlapped_file_with_tombstones_groups.push(group);
             }
         }
 
@@ -1850,13 +1860,15 @@ mod tests {
             data: Arc::new(pf2),
             tombstones: vec![],
         };
-        let pc1 = pt1.to_queryable_parquet_chunk(
+        let pc1 = QueryableParquetChunk::from_parquet_file_with_tombstones(
             Arc::clone(&catalog.object_store),
             table.table.name.clone(),
+            &pt1,
         );
-        let pc2 = pt2.to_queryable_parquet_chunk(
+        let pc2 = QueryableParquetChunk::from_parquet_file_with_tombstones(
             Arc::clone(&catalog.object_store),
             table.table.name.clone(),
+            &pt2,
         );
 
         // Vector of chunks
