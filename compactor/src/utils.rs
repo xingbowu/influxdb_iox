@@ -3,8 +3,8 @@
 use crate::query::QueryableParquetChunk;
 use arrow::record_batch::RecordBatch;
 use data_types2::{
-    ParquetFile, ParquetFileId, ParquetFileParams, PartitionId, SequencerId, TableId, Timestamp,
-    Tombstone, TombstoneId,
+    FileMeta, ParquetFile, ParquetFileId, ParquetFileParams, PartitionId, SequenceNumber,
+    SequencerId, TableId, Timestamp, Tombstone, TombstoneId,
 };
 use iox_object_store::IoxObjectStore;
 use object_store::DynObjectStore;
@@ -35,9 +35,12 @@ impl GroupWithTombstones {
 
 /// Wrapper of group of parquet files with their min time and total size
 #[derive(Debug, Clone, PartialEq)]
-pub struct GroupWithMinTimeAndSize {
+pub struct GroupWithMinTimeAndSize<T>
+where
+    T: FileMeta,
+{
     /// Parquet files
-    pub(crate) parquet_files: Vec<ParquetFile>,
+    pub(crate) parquet_files: Vec<Arc<T>>,
 
     /// min time of all parquet_files
     pub(crate) min_time: Timestamp,
@@ -52,6 +55,40 @@ pub struct GroupWithMinTimeAndSize {
 pub struct ParquetFileWithTombstone {
     pub(crate) data: Arc<ParquetFile>,
     pub(crate) tombstones: Vec<Tombstone>,
+}
+
+impl FileMeta for ParquetFileWithTombstone {
+    fn sequencer_id(&self) -> SequencerId {
+        self.data.sequencer_id
+    }
+
+    fn table_id(&self) -> TableId {
+        self.data.table_id
+    }
+
+    fn min_time(&self) -> Timestamp {
+        self.data.min_time
+    }
+
+    fn max_time(&self) -> Timestamp {
+        self.data.max_time
+    }
+
+    fn file_size_bytes(&self) -> i64 {
+        self.data.file_size_bytes
+    }
+
+    fn max_sequence_number(&self) -> SequenceNumber {
+        self.data.max_sequence_number
+    }
+
+    fn parquet_file(&self) -> ParquetFile {
+        (*self.data).clone()
+    }
+
+    fn tombstones_attached(&self) -> bool {
+        true
+    }
 }
 
 impl ParquetFileWithTombstone {

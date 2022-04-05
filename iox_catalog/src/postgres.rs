@@ -1645,8 +1645,8 @@ WHERE parquet_file.sequencer_id = $1
     async fn list_by_partition_not_to_delete(
         &mut self,
         partition_id: PartitionId,
-    ) -> Result<Vec<ParquetFile>> {
-        sqlx::query_as::<_, ParquetFile>(
+    ) -> Result<Vec<Arc<ParquetFile>>> {
+        let result = sqlx::query_as::<_, ParquetFile>(
             r#"
 SELECT *
 FROM parquet_file
@@ -1657,7 +1657,13 @@ WHERE parquet_file.partition_id = $1
         .bind(&partition_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(|e| Error::SqlxError { source: e })?
+        .iter()
+        .cloned()
+        .map(Arc::new)
+        .collect::<Vec<_>>();
+
+        Ok(result)
     }
 
     async fn update_to_level_1(

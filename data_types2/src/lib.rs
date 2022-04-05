@@ -703,6 +703,87 @@ pub fn tombstones_to_delete_predicates_iter(
     })
 }
 
+/// Error type for [`FileMeta`] operations.
+pub type FileMetaError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// Collection of funtions a ParquetFile or its wrapper can provide
+pub trait FileMeta: Sync + Send + Clone + std::fmt::Debug + 'static {
+    /// Sequence id
+    fn sequencer_id(&self) -> SequencerId;
+
+    /// Table id
+    fn table_id(&self) -> TableId;
+
+    /// Return min time of the file data
+    fn min_time(&self) -> Timestamp;
+
+    /// Return max time of the file data
+    fn max_time(&self) -> Timestamp;
+
+    /// Return the size of the file data
+    fn file_size_bytes(&self) -> i64;
+
+    /// Return max sequnce number
+    fn max_sequence_number(&self) -> SequenceNumber;
+
+    /// Return parquet file
+    fn parquet_file(&self) -> ParquetFile;
+
+    /// Return true if there are already tombstones
+    fn tombstones_attached(&self) -> bool;
+
+    // Return the parquet file with tombstones
+    //fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone;
+}
+
+impl<P> FileMeta for Arc<P>
+where
+    P: FileMeta,
+{
+    /// Sequence id
+    fn sequencer_id(&self) -> SequencerId {
+        self.as_ref().sequencer_id()
+    }
+
+    /// Table id
+    fn table_id(&self) -> TableId {
+        self.as_ref().table_id()
+    }
+
+    /// Return min time of the file data
+    fn min_time(&self) -> Timestamp {
+        self.as_ref().min_time()
+    }
+
+    /// Return max time of the file data
+    fn max_time(&self) -> Timestamp {
+        self.as_ref().max_time()
+    }
+
+    /// Return the size of the file data
+    fn file_size_bytes(&self) -> i64 {
+        self.as_ref().file_size_bytes()
+    }
+
+    /// Return max sequnce number
+    fn max_sequence_number(&self) -> SequenceNumber {
+        self.as_ref().max_sequence_number()
+    }
+
+    /// Return parquet file
+    fn parquet_file(&self) -> ParquetFile {
+        self.as_ref().parquet_file()
+    }
+
+    /// Return true if there are already tombstones
+    fn tombstones_attached(&self) -> bool {
+        self.as_ref().tombstones_attached()
+    }
+
+    // Return the parquet file with tombstones
+    // fn parquet
+}
+
 /// Data for a parquet file reference that has been inserted in the catalog.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct ParquetFile {
@@ -738,6 +819,40 @@ pub struct ParquetFile {
     pub compaction_level: i16,
     /// the creation time of the parquet file
     pub created_at: Timestamp,
+}
+
+impl FileMeta for ParquetFile {
+    fn sequencer_id(&self) -> SequencerId {
+        self.sequencer_id
+    }
+
+    fn table_id(&self) -> TableId {
+        self.table_id
+    }
+
+    fn min_time(&self) -> Timestamp {
+        self.min_time
+    }
+
+    fn max_time(&self) -> Timestamp {
+        self.max_time
+    }
+
+    fn file_size_bytes(&self) -> i64 {
+        self.file_size_bytes
+    }
+
+    fn max_sequence_number(&self) -> SequenceNumber {
+        self.max_sequence_number
+    }
+
+    fn parquet_file(&self) -> ParquetFile {
+        self.clone()
+    }
+
+    fn tombstones_attached(&self) -> bool {
+        false
+    }
 }
 
 /// Data for a parquet file to be inserted into the catalog.

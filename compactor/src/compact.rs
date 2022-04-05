@@ -10,8 +10,8 @@ use arrow::record_batch::RecordBatch;
 use backoff::{Backoff, BackoffConfig};
 use bytes::Bytes;
 use data_types2::{
-    ParquetFile, ParquetFileId, PartitionId, SequencerId, TableId, TablePartition, Timestamp,
-    Tombstone, TombstoneId,
+    FileMeta, ParquetFile, ParquetFileId, PartitionId, SequencerId, TableId, TablePartition,
+    Timestamp, Tombstone, TombstoneId,
 };
 use datafusion::error::DataFusionError;
 use iox_catalog::interface::{Catalog, Transaction};
@@ -366,7 +366,7 @@ impl Compactor {
         Ok(candidates)
     }
 
-    /// Compact files for available tombstones
+    /// Get files that need to apply the available tombstones
     /// Return a list of partitions with tombstones-attached parquet files to be compacted
     pub async fn partitions_with_files_to_compact(&self) -> Result<Vec<PartitionWithParquetFiles>> {
         let mut repos = self.catalog.repositories().await;
@@ -388,9 +388,7 @@ impl Compactor {
             //  Group by table
             let mut table_tombstones: BTreeMap<TableId, Vec<Tombstone>> = BTreeMap::new();
             for ts in tombstones {
-                let tss = table_tombstones
-                    .entry(ts.table_id)
-                    .or_insert_with(Vec::new);
+                let tss = table_tombstones.entry(ts.table_id).or_insert_with(Vec::new);
                 tss.push(ts);
             }
 
@@ -567,10 +565,13 @@ impl Compactor {
     }
 
     // Group time-contiguous non-overlapped groups if their total size is smaller than a threshold
-    fn group_small_contiguous_groups(
-        mut file_groups: Vec<GroupWithMinTimeAndSize>,
+    fn group_small_contiguous_groups<T>(
+        mut file_groups: Vec<GroupWithMinTimeAndSize<T>>,
         compaction_max_size_bytes: i64,
-    ) -> Vec<Vec<ParquetFile>> {
+    ) -> Vec<Vec<Arc<T>>>
+    where
+        T: FileMeta,
+    {
         let mut groups = Vec::with_capacity(file_groups.len());
         if file_groups.is_empty() {
             return groups;
@@ -880,7 +881,10 @@ impl Compactor {
 
     /// Given a list of parquet files that come from the same Table Partition, group files together
     /// if their (min_time, max_time) ranges overlap. Does not preserve or guarantee any ordering.
-    fn overlapped_groups(mut parquet_files: Vec<ParquetFile>) -> Vec<GroupWithMinTimeAndSize> {
+    fn overlapped_groups<T>(mut parquet_files: Vec<Arc<T>>) -> Vec<GroupWithMinTimeAndSize<T>>
+    where
+        T: FileMeta,
+    {
         let mut groups = Vec::with_capacity(parquet_files.len());
 
         // While there are still files not in any group
@@ -890,8 +894,8 @@ impl Compactor {
 
             // first file
             let pf = parquet_files.swap_remove(0);
-            let mut min_time = pf.min_time;
-            let mut total_file_size_bytes = pf.file_size_bytes;
+            let mut min_time = pf.min_time();
+            let mut total_file_size_bytes = pf.file_size_bytes();
             in_group.push(pf);
 
             // Start a group for the remaining files that don't overlap
@@ -901,12 +905,13 @@ impl Compactor {
             // the group. If not, add it to the non-overlapping group.
             for file in parquet_files {
                 if in_group.iter().any(|group_file| {
-                    (file.min_time <= group_file.min_time && file.max_time >= group_file.min_time)
-                        || (file.min_time > group_file.min_time
-                            && file.min_time <= group_file.max_time)
+                    (file.min_time() <= group_file.min_time()
+                        && file.max_time() >= group_file.min_time())
+                        || (file.min_time() > group_file.min_time()
+                            && file.min_time() <= group_file.max_time())
                 }) {
-                    min_time = min_time.min(file.min_time);
-                    total_file_size_bytes += file.file_size_bytes;
+                    min_time = min_time.min(file.min_time());
+                    total_file_size_bytes += file.file_size_bytes();
                     in_group.push(file);
                 } else {
                     out_group.push(file);
@@ -1010,10 +1015,13 @@ impl Compactor {
         count_pf == count_pt
     }
 
-    async fn add_tombstones_to_groups(
+    async fn add_tombstones_to_groups<T>(
         &self,
-        groups: Vec<Vec<ParquetFile>>,
-    ) -> Result<Vec<GroupWithTombstones>> {
+        groups: Vec<Vec<Arc<T>>>,
+    ) -> Result<Vec<GroupWithTombstones>>
+    where
+        T: FileMeta,
+    {
         let mut repo = self.catalog.repositories().await;
         let tombstone_repo = repo.tombstones();
 
@@ -1026,69 +1034,75 @@ impl Compactor {
                 continue;
             }
 
-            // Find the time range of the group
-            let overall_min_time = parquet_files
-                .iter()
-                .map(|pf| pf.min_time)
-                .min()
-                .expect("The group was checked for emptiness above");
-            let overall_max_time = parquet_files
-                .iter()
-                .map(|pf| pf.max_time)
-                .max()
-                .expect("The group was checked for emptiness above");
-            // For a tombstone to be relevant to any parquet file, the tombstone must have a
-            // sequence number greater than the parquet file's max_sequence_number. If we query
-            // for all tombstones with a sequence number greater than the smallest parquet file
-            // max_sequence_number in the group, we'll get all tombstones that could possibly
-            // be relevant for this group.
-            let overall_min_max_sequence_number = parquet_files
-                .iter()
-                .map(|pf| pf.max_sequence_number)
-                .min()
-                .expect("The group was checked for emptiness above");
+            // Not have tombstones attached to the parquet files yet, get and attach them
+            if !parquet_files[0].tombstones_attached() {
+                // Find the time range of the group
+                let overall_min_time = parquet_files
+                    .iter()
+                    .map(|pf| pf.min_time())
+                    .min()
+                    .expect("The group was checked for emptiness above");
+                let overall_max_time = parquet_files
+                    .iter()
+                    .map(|pf| pf.max_time())
+                    .max()
+                    .expect("The group was checked for emptiness above");
+                // For a tombstone to be relevant to any parquet file, the tombstone must have a
+                // sequence number greater than the parquet file's max_sequence_number. If we query
+                // for all tombstones with a sequence number greater than the smallest parquet file
+                // max_sequence_number in the group, we'll get all tombstones that could possibly
+                // be relevant for this group.
+                let overall_min_max_sequence_number = parquet_files
+                    .iter()
+                    .map(|pf| pf.max_sequence_number())
+                    .min()
+                    .expect("The group was checked for emptiness above");
 
-            // Query the catalog for the tombstones that could be relevant to any parquet files
-            // in this group.
-            let tombstones = tombstone_repo
-                .list_tombstones_for_time_range(
-                    // We've previously grouped the parquet files by sequence and table IDs, so
-                    // these values will be the same for all parquet files in the group.
-                    parquet_files[0].sequencer_id,
-                    parquet_files[0].table_id,
-                    overall_min_max_sequence_number,
-                    overall_min_time,
-                    overall_max_time,
-                )
-                .await
-                .context(QueryingTombstonesSnafu)?;
+                // Query the catalog for the tombstones that could be relevant to any parquet files
+                // in this group.
+                let tombstones = tombstone_repo
+                    .list_tombstones_for_time_range(
+                        // We've previously grouped the parquet files by sequence and table IDs, so
+                        // these values will be the same for all parquet files in the group.
+                        parquet_files[0].sequencer_id(),
+                        parquet_files[0].table_id(),
+                        overall_min_max_sequence_number,
+                        overall_min_time,
+                        overall_max_time,
+                    )
+                    .await
+                    .context(QueryingTombstonesSnafu)?;
 
-            let parquet_files = parquet_files
-                .into_iter()
-                .map(|data| {
-                    // Filter the set of tombstones relevant to any file in the group to just those
-                    // relevant to this particular parquet file.
-                    let relevant_tombstones = tombstones
-                        .iter()
-                        .cloned()
-                        .filter(|t| {
-                            t.sequence_number > data.max_sequence_number
-                                && ((t.min_time <= data.min_time && t.max_time >= data.min_time)
-                                    || (t.min_time > data.min_time && t.min_time <= data.max_time))
-                        })
-                        .collect();
+                let parquet_files = parquet_files
+                    .into_iter()
+                    .map(|data| {
+                        // Filter the set of tombstones relevant to any file in the group to just those
+                        // relevant to this particular parquet file.
+                        let relevant_tombstones = tombstones
+                            .iter()
+                            .cloned()
+                            .filter(|t| {
+                                t.sequence_number > data.max_sequence_number()
+                                    && ((t.min_time <= data.min_time()
+                                        && t.max_time >= data.min_time())
+                                        || (t.min_time > data.min_time()
+                                            && t.min_time <= data.max_time()))
+                            })
+                            .collect();
 
-                    ParquetFileWithTombstone {
-                        data: Arc::new(data),
-                        tombstones: relevant_tombstones,
-                    }
-                })
-                .collect();
+                        ParquetFileWithTombstone {
+                            data: Arc::new(data.parquet_file()),
+                            tombstones: relevant_tombstones,
+                        }
+                    })
+                    .collect();
 
-            overlapped_file_with_tombstones_groups.push(GroupWithTombstones {
-                parquet_files,
-                tombstones,
-            });
+                overlapped_file_with_tombstones_groups.push(GroupWithTombstones {
+                    parquet_files,
+                    tombstones,
+                });
+            } else { // already has tombstones attached to
+            }
         }
 
         Ok(overlapped_file_with_tombstones_groups)
@@ -1863,10 +1877,10 @@ mod tests {
     #[test]
     fn test_overlapped_groups_no_overlap() {
         // Given two files that don't overlap,
-        let pf1 = arbitrary_parquet_file(1, 2);
-        let pf2 = arbitrary_parquet_file(3, 4);
+        let pf1 = Arc::new(arbitrary_parquet_file(1, 2));
+        let pf2 = Arc::new(arbitrary_parquet_file(3, 4));
 
-        let groups = Compactor::overlapped_groups(vec![pf1.clone(), pf2.clone()]);
+        let groups = Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
 
         // They should be 2 groups
         assert_eq!(groups.len(), 2, "There should have been two group");
@@ -1878,10 +1892,10 @@ mod tests {
     #[test]
     fn test_overlapped_groups_with_overlap() {
         // Given two files that do overlap,
-        let pf1 = arbitrary_parquet_file(1, 3);
-        let pf2 = arbitrary_parquet_file(2, 4);
+        let pf1 = Arc::new(arbitrary_parquet_file(1, 3));
+        let pf2 = Arc::new(arbitrary_parquet_file(2, 4));
 
-        let groups = Compactor::overlapped_groups(vec![pf1.clone(), pf2.clone()]);
+        let groups = Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
 
         // They should be in one group (order not guaranteed)
         assert_eq!(groups.len(), 1, "There should have only been one group");
@@ -1898,25 +1912,25 @@ mod tests {
 
     #[test]
     fn test_overlapped_groups_many_groups() {
-        let overlaps_many = arbitrary_parquet_file(5, 10);
-        let contained_completely_within = arbitrary_parquet_file(6, 7);
-        let max_equals_min = arbitrary_parquet_file(3, 5);
-        let min_equals_max = arbitrary_parquet_file(10, 12);
+        let overlaps_many = Arc::new(arbitrary_parquet_file(5, 10));
+        let contained_completely_within = Arc::new(arbitrary_parquet_file(6, 7));
+        let max_equals_min = Arc::new(arbitrary_parquet_file(3, 5));
+        let min_equals_max = Arc::new(arbitrary_parquet_file(10, 12));
 
-        let alone = arbitrary_parquet_file(30, 35);
+        let alone = Arc::new(arbitrary_parquet_file(30, 35));
 
-        let another = arbitrary_parquet_file(13, 15);
-        let partial_overlap = arbitrary_parquet_file(14, 16);
+        let another = Arc::new(arbitrary_parquet_file(13, 15));
+        let partial_overlap = Arc::new(arbitrary_parquet_file(14, 16));
 
         // Given a bunch of files in an arbitrary order,
         let all = vec![
-            min_equals_max.clone(),
-            overlaps_many.clone(),
-            alone.clone(),
-            another.clone(),
-            max_equals_min.clone(),
-            contained_completely_within.clone(),
-            partial_overlap.clone(),
+            Arc::clone(&min_equals_max),
+            Arc::clone(&overlaps_many),
+            Arc::clone(&alone),
+            Arc::clone(&another),
+            Arc::clone(&max_equals_min),
+            Arc::clone(&contained_completely_within),
+            Arc::clone(&partial_overlap),
         ];
 
         let mut groups = Compactor::overlapped_groups(all);
@@ -1977,19 +1991,20 @@ mod tests {
     #[test]
     fn test_group_small_contiguous_overlapped_groups() {
         // Given two files that don't overlap,
-        let pf1 = arbitrary_parquet_file_with_size(1, 2, 100);
-        let pf2 = arbitrary_parquet_file_with_size(3, 4, 200);
+        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100));
+        let pf2 = Arc::new(arbitrary_parquet_file_with_size(3, 4, 200));
 
-        let overlapped_groups = Compactor::overlapped_groups(vec![pf1.clone(), pf2.clone()]);
+        let overlapped_groups =
+            Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
         // 2 overlapped groups
         assert_eq!(overlapped_groups.len(), 2);
         let g1 = GroupWithMinTimeAndSize {
-            parquet_files: vec![pf1.clone()],
+            parquet_files: vec![Arc::clone(&pf1)],
             min_time: Timestamp::new(1),
             total_file_size_bytes: 100,
         };
         let g2 = GroupWithMinTimeAndSize {
-            parquet_files: vec![pf2.clone()],
+            parquet_files: vec![Arc::clone(&pf2)],
             min_time: Timestamp::new(3),
             total_file_size_bytes: 200,
         };
@@ -2010,19 +2025,24 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // Given two files that don't overlap,
-        let pf1 = arbitrary_parquet_file_with_size(1, 2, 100);
-        let pf2 = arbitrary_parquet_file_with_size(3, 4, compaction_max_size_bytes); // too large to group
+        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100));
+        let pf2 = Arc::new(arbitrary_parquet_file_with_size(
+            3,
+            4,
+            compaction_max_size_bytes,
+        )); // too large to group
 
-        let overlapped_groups = Compactor::overlapped_groups(vec![pf1.clone(), pf2.clone()]);
+        let overlapped_groups =
+            Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
         // 2 overlapped groups
         assert_eq!(overlapped_groups.len(), 2);
         let g1 = GroupWithMinTimeAndSize {
-            parquet_files: vec![pf1.clone()],
+            parquet_files: vec![Arc::clone(&pf1)],
             min_time: Timestamp::new(1),
             total_file_size_bytes: 100,
         };
         let g2 = GroupWithMinTimeAndSize {
-            parquet_files: vec![pf2.clone()],
+            parquet_files: vec![Arc::clone(&pf2)],
             min_time: Timestamp::new(3),
             total_file_size_bytes: compaction_max_size_bytes,
         };
@@ -2042,27 +2062,31 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped and very small
-        let overlaps_many = arbitrary_parquet_file_with_size(5, 10, 200);
-        let contained_completely_within = arbitrary_parquet_file_with_size(6, 7, 300);
-        let max_equals_min = arbitrary_parquet_file_with_size(3, 5, 400);
-        let min_equals_max = arbitrary_parquet_file_with_size(10, 12, 500);
+        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
+        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
+        let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(3, 5, 400));
+        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
 
         // newest files and very large
-        let alone = arbitrary_parquet_file_with_size(30, 35, compaction_max_size_bytes + 200); // too large to group
+        let alone = Arc::new(arbitrary_parquet_file_with_size(
+            30,
+            35,
+            compaction_max_size_bytes + 200,
+        )); // too large to group
 
         // small files in  the middle
-        let another = arbitrary_parquet_file_with_size(13, 15, 1000);
-        let partial_overlap = arbitrary_parquet_file_with_size(14, 16, 2000);
+        let another = Arc::new(arbitrary_parquet_file_with_size(13, 15, 1000));
+        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
 
         // Given a bunch of files in an arbitrary order,
         let all = vec![
-            min_equals_max.clone(),
-            overlaps_many.clone(),
-            alone.clone(),
-            another.clone(),
-            max_equals_min.clone(),
-            contained_completely_within.clone(),
-            partial_overlap.clone(),
+            Arc::clone(&min_equals_max),
+            Arc::clone(&overlaps_many),
+            Arc::clone(&alone),
+            Arc::clone(&another),
+            Arc::clone(&max_equals_min),
+            Arc::clone(&contained_completely_within),
+            Arc::clone(&partial_overlap),
         ];
 
         // Group into overlapped groups
@@ -2092,28 +2116,39 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped  and large
-        let overlaps_many = arbitrary_parquet_file_with_size(5, 10, 200);
-        let contained_completely_within = arbitrary_parquet_file_with_size(6, 7, 300);
-        let max_equals_min =
-            arbitrary_parquet_file_with_size(3, 5, compaction_max_size_bytes + 400); // too large to group
-        let min_equals_max = arbitrary_parquet_file_with_size(10, 12, 500);
+        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
+        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
+        let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(
+            3,
+            5,
+            compaction_max_size_bytes + 400,
+        )); // too large to group
+        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
 
         // newest files and large
-        let alone = arbitrary_parquet_file_with_size(30, 35, compaction_max_size_bytes + 200); // too large to group
+        let alone = Arc::new(arbitrary_parquet_file_with_size(
+            30,
+            35,
+            compaction_max_size_bytes + 200,
+        )); // too large to group
 
         // files in  the middle and also large
-        let another = arbitrary_parquet_file_with_size(13, 15, compaction_max_size_bytes + 100); // too large to group
-        let partial_overlap = arbitrary_parquet_file_with_size(14, 16, 2000);
+        let another = Arc::new(arbitrary_parquet_file_with_size(
+            13,
+            15,
+            compaction_max_size_bytes + 100,
+        )); // too large to group
+        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
 
         // Given a bunch of files in an arbitrary order
         let all = vec![
-            min_equals_max.clone(),
-            overlaps_many.clone(),
-            alone.clone(),
-            another.clone(),
-            max_equals_min.clone(),
-            contained_completely_within.clone(),
-            partial_overlap.clone(),
+            Arc::clone(&min_equals_max),
+            Arc::clone(&overlaps_many),
+            Arc::clone(&alone),
+            Arc::clone(&another),
+            Arc::clone(&max_equals_min),
+            Arc::clone(&contained_completely_within),
+            Arc::clone(&partial_overlap),
         ];
 
         // Group into overlapped groups
@@ -2145,27 +2180,31 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped and very small
-        let overlaps_many = arbitrary_parquet_file_with_size(5, 10, 200);
-        let contained_completely_within = arbitrary_parquet_file_with_size(6, 7, 300);
-        let max_equals_min = arbitrary_parquet_file_with_size(3, 5, 400);
-        let min_equals_max = arbitrary_parquet_file_with_size(10, 12, 500);
+        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
+        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
+        let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(3, 5, 400));
+        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
 
         // newest files and small
-        let alone = arbitrary_parquet_file_with_size(30, 35, 200);
+        let alone = Arc::new(arbitrary_parquet_file_with_size(30, 35, 200));
 
         // large files in  the middle
-        let another = arbitrary_parquet_file_with_size(13, 15, compaction_max_size_bytes + 100); // too large to group
-        let partial_overlap = arbitrary_parquet_file_with_size(14, 16, 2000);
+        let another = Arc::new(arbitrary_parquet_file_with_size(
+            13,
+            15,
+            compaction_max_size_bytes + 100,
+        )); // too large to group
+        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
 
         // Given a bunch of files in an arbitrary order
         let all = vec![
-            min_equals_max.clone(),
-            overlaps_many.clone(),
-            alone.clone(),
-            another.clone(),
-            max_equals_min.clone(),
-            contained_completely_within.clone(),
-            partial_overlap.clone(),
+            Arc::clone(&min_equals_max),
+            Arc::clone(&overlaps_many),
+            Arc::clone(&alone),
+            Arc::clone(&another),
+            Arc::clone(&max_equals_min),
+            Arc::clone(&contained_completely_within),
+            Arc::clone(&partial_overlap),
         ];
 
         // Group into overlapped groups
@@ -2262,10 +2301,10 @@ mod tests {
 
             ..p1.clone()
         };
-        let pf1 = txn.parquet_files().create(p1).await.unwrap();
-        let pf2 = txn.parquet_files().create(p2).await.unwrap();
+        let pf1 = Arc::new(txn.parquet_files().create(p1).await.unwrap());
+        let pf2 = Arc::new(txn.parquet_files().create(p2).await.unwrap());
 
-        let parquet_files = vec![pf1.clone(), pf2.clone()];
+        let parquet_files = vec![Arc::clone(&pf1), Arc::clone(&pf2)];
         let groups = vec![
             vec![], // empty group should get filtered out
             parquet_files,

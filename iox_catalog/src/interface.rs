@@ -546,7 +546,7 @@ pub trait ParquetFileRepo: Send + Sync {
     async fn list_by_partition_not_to_delete(
         &mut self,
         partition_id: PartitionId,
-    ) -> Result<Vec<ParquetFile>>;
+    ) -> Result<Vec<Arc<ParquetFile>>>;
 
     /// Update the compaction level of the specified parquet files to level 1. Returns the IDs
     /// of the files that were successfully updated.
@@ -2479,7 +2479,7 @@ pub(crate) mod test_helpers {
             .list_by_partition_not_to_delete(partition.id)
             .await
             .unwrap();
-        assert_eq!(files, vec![parquet_file, level1_file]);
+        assert_eq!(files, vec![Arc::new(parquet_file), Arc::new(level1_file)]);
     }
 
     async fn test_update_to_compaction_level_1(catalog: Arc<dyn Catalog>) {

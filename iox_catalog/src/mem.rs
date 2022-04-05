@@ -1107,7 +1107,7 @@ impl ParquetFileRepo for MemTxn {
     async fn list_by_partition_not_to_delete(
         &mut self,
         partition_id: PartitionId,
-    ) -> Result<Vec<ParquetFile>> {
+    ) -> Result<Vec<Arc<ParquetFile>>> {
         let stage = self.stage();
 
         Ok(stage
@@ -1115,6 +1115,7 @@ impl ParquetFileRepo for MemTxn {
             .iter()
             .filter(|f| f.partition_id == partition_id && f.to_delete.is_none())
             .cloned()
+            .map(Arc::new)
             .collect())
     }
 
