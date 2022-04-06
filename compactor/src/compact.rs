@@ -1282,6 +1282,133 @@ mod tests {
         );
     }
 
+    //
+    #[tokio::test]
+    async fn test_compact_cold_partition_with_files() {
+        let catalog = TestCatalog::new();
+
+        let lp = vec![
+            "table,tag1=WA field_int=1000 8000",
+            "table,tag1=VT field_int=10 10000",
+            "table,tag1=UT field_int=70 20000",
+        ]
+        .join("\n");
+        let ns = catalog.create_namespace("ns").await;
+        let sequencer = ns.create_sequencer(1).await;
+        let table = ns.create_table("table").await;
+
+        // One parquet file
+        let partition = table
+            .with_sequencer(&sequencer)
+            .create_partition("part")
+            .await;
+        let file = partition
+            .create_parquet_file_with_min_max_and_creation_time(
+                &lp,
+                1,
+                1,
+                8000,
+                20000,
+                catalog.time_provider.now().timestamp_nanos(),
+            )
+            .await;
+        // should have 1 level-0 file
+        let count = catalog.count_level_0_files(sequencer.sequencer.id).await;
+        assert_eq!(count, 1);
+
+        // One overlaped tombstone
+        let tombstone = table
+            .with_sequencer(&sequencer)
+            .create_tombstone(20, 6000, 12000, "tag1=VT")
+            .await;
+        // Should have 1 tomstone
+        let count = catalog.count_tombstones_for_table(table.table.id).await;
+        assert_eq!(count, 1);
+
+        // Parquet file with tombstones
+        let pfwt = Arc::new(ParquetFileWithTombstone {
+            data: Arc::new(file.parquet_file.clone()),
+            tombstones: vec![tombstone.tombstone.clone()],
+        }) as Arc<dyn FileMeta>;
+
+        // ------------------------------------------------
+        // Compact
+        let compactor = Compactor::new(
+            vec![sequencer.sequencer.id],
+            Arc::clone(&catalog.catalog),
+            Arc::clone(&catalog.object_store),
+            Arc::new(Executor::new(1)),
+            Arc::new(SystemProvider::new()),
+            BackoffConfig::default(),
+            CompactorConfig::new(90, 100000, 100000),
+            Arc::new(metric::Registry::new()),
+        );
+
+        compactor
+            .compact_partition(
+                partition.partition.id,
+                compactor.config.compaction_max_size_bytes(),
+                Some(vec![pfwt]),
+            )
+            .await
+            .unwrap();
+        // should have 2 non-deleted level_0 files. The original file was marked deleted and not counted
+        let files = catalog.list_by_table_not_to_delete(table.table.id).await;
+        assert_eq!(files.len(), 2);
+        // 2 newly created level-1 files as the result of compaction
+        assert_eq!((files[0].id.get(), files[0].compaction_level), (2, 1));
+        assert_eq!((files[1].id.get(), files[1].compaction_level), (3, 1));
+
+        // processed tombstones created and deleted inside compact_partition function
+        let count = catalog
+            .count_processed_tombstones(tombstone.tombstone.id)
+            .await;
+        assert_eq!(count, 0);
+        // the tombstone is fully processed and should have been removed
+        let count = catalog.count_tombstones_for_table(table.table.id).await;
+        assert_eq!(count, 0);
+
+        // ------------------------------------------------
+        // Verify the parquet file content
+        let adapter = ParquetChunkAdapter::new(
+            Arc::new(CatalogCache::new(
+                catalog.catalog(),
+                catalog.time_provider(),
+            )),
+            catalog.object_store(),
+            catalog.metric_registry(),
+            catalog.time_provider(),
+        );
+        // create chunks for 2 files
+        let chunk_0 = adapter.new_querier_chunk(files[0].clone()).await.unwrap();
+        let chunk_1 = adapter.new_querier_chunk(files[1].clone()).await.unwrap();
+        // query the chunks
+        // least recent compacted first half (~90%)
+        let batches = collect_read_filter(&chunk_0).await;
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+-----------------------------+",
+                "| field_int | tag1 | time                        |",
+                "+-----------+------+-----------------------------+",
+                "| 1000      | WA   | 1970-01-01T00:00:00.000008Z |",
+                "+-----------+------+-----------------------------+",
+            ],
+            &batches
+        );
+        // most recent compacted second half (~10%)
+        let batches = collect_read_filter(&chunk_1).await;
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+-----------------------------+",
+                "| field_int | tag1 | time                        |",
+                "+-----------+------+-----------------------------+",
+                "| 70        | UT   | 1970-01-01T00:00:00.000020Z |",
+                "+-----------+------+-----------------------------+",
+            ],
+            &batches
+        );
+    }
+
     // A quite sophisticated integration test
     // Beside lp data, every value min/max sequence numbers and min/max time are important
     // to have a combination of needed tests in this test function
@@ -1402,7 +1529,7 @@ mod tests {
             .with_sequencer(&sequencer)
             .create_tombstone(2, 6000, 21000, "tag1=UT")
             .await;
-        // ts2 overlap with both pf1 and pf2 but issued before pf3 so only applied to pf2
+        // ts2 overlap with both pf3 and pf2 but issued before pf3 so only applied to pf2
         let ts2 = table
             .with_sequencer(&sequencer)
             .create_tombstone(6, 6000, 12000, "tag1=VT")
@@ -1477,6 +1604,240 @@ mod tests {
                 "| field_int | tag1 | tag2 | tag3 | time                        |",
                 "+-----------+------+------+------+-----------------------------+",
                 "| 10        | VT   |      |      | 1970-01-01T00:00:00.000006Z |",
+                "| 1500      | WA   |      |      | 1970-01-01T00:00:00.000008Z |",
+                "| 270       | UT   |      |      | 1970-01-01T00:00:00.000025Z |",
+                "| 70        | UT   |      |      | 1970-01-01T00:00:00.000020Z |",
+                "+-----------+------+------+------+-----------------------------+",
+            ],
+            &batches
+        );
+        // most recent compacted second half (~10%)
+        let batches = collect_read_filter(&chunk_1).await;
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+------+------+-----------------------------+",
+                "| field_int | tag1 | tag2 | tag3 | time                        |",
+                "+-----------+------+------+------+-----------------------------+",
+                "| 1600      |      | WA   | 10   | 1970-01-01T00:00:00.000028Z |",
+                "| 20        |      | VT   | 20   | 1970-01-01T00:00:00.000026Z |",
+                "+-----------+------+------+------+-----------------------------+",
+            ],
+            &batches
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compact_cold_partition_with_many_files_many_tombstones() {
+        let catalog = TestCatalog::new();
+
+        // lp1 does not overlap with any
+        let lp1 = vec![
+            "table,tag1=WA field_int=1000 10",
+            "table,tag1=VT field_int=10 20",
+        ]
+        .join("\n");
+
+        // lp2 overlaps with lp3
+        let lp2 = vec![
+            "table,tag1=WA field_int=1000 8000", // will be eliminated due to duplicate
+            "table,tag1=VT field_int=10 10000",  // will be deleted by ts2
+            "table,tag1=UT field_int=70 20000",
+        ]
+        .join("\n");
+
+        // lp3 overlaps with lp2
+        let lp3 = vec![
+            "table,tag1=WA field_int=1500 8000", // latest duplicate and kept
+            "table,tag1=VT field_int=10 6000",
+            "table,tag1=UT field_int=270 25000",
+        ]
+        .join("\n");
+
+        // lp4 does not overlapp with any
+        let lp4 = vec![
+            "table,tag2=WA,tag3=10 field_int=1600 28000",
+            "table,tag2=VT,tag3=20 field_int=20 26000",
+        ]
+        .join("\n");
+
+        let ns = catalog.create_namespace("ns").await;
+        let sequencer = ns.create_sequencer(1).await;
+        let table = ns.create_table("table").await;
+        let partition = table
+            .with_sequencer(&sequencer)
+            .create_partition("part")
+            .await;
+        let time = Arc::new(SystemProvider::new());
+        let compactor = Compactor::new(
+            vec![sequencer.sequencer.id],
+            Arc::clone(&catalog.catalog),
+            Arc::clone(&catalog.object_store),
+            Arc::new(Executor::new(1)),
+            Arc::new(SystemProvider::new()),
+            BackoffConfig::default(),
+            CompactorConfig::new(90, 100000, 100000),
+            Arc::new(metric::Registry::new()),
+        );
+
+        // parquet files
+        // pf1 does not overlap with any tombstones and won't be provided to the compact function => will stay intact level 0
+        let _pf1 = partition
+            .create_parquet_file_with_min_max_size_and_creation_time(
+                &lp1,
+                1,
+                1,
+                10,
+                20,
+                compactor.config.compaction_max_size_bytes() + 10,
+                20,
+            )
+            .await
+            .parquet_file
+            .clone();
+        // pf2 overlaps with pf3 ==> compacted and marked to_delete with a timestamp
+        let pf2 = partition
+            .create_parquet_file_with_min_max_and_creation_time(
+                &lp2,
+                4,
+                5,
+                8000,
+                20000,
+                time.now().timestamp_nanos(),
+            )
+            .await
+            .parquet_file
+            .clone();
+        // pf3 overlaps with pf2 and both have tombstones ==> compacted and marked to_delete with a timestamp
+        let pf3 = partition
+            .create_parquet_file_with_min_max_and_creation_time(
+                &lp3,
+                8,
+                10,
+                6000,
+                25000,
+                time.now().timestamp_nanos(),
+            )
+            .await
+            .parquet_file
+            .clone();
+        // pf4 does not overlap with any but have tomsbtones and small => will also be compacted with pf2 and pf3
+        let pf4 = partition
+            .create_parquet_file_with_min_max_and_creation_time(
+                &lp4,
+                18,
+                18,
+                26000,
+                28000,
+                time.now().timestamp_nanos(),
+            )
+            .await
+            .parquet_file
+            .clone();
+        // should have 4 level-0 files before compacting
+        let count = catalog.count_level_0_files(sequencer.sequencer.id).await;
+        assert_eq!(count, 4);
+
+        // create 3 tombstones
+        // ts1 overlaps with pf1 and pf2 but issued before pf1 and pf2 hence it won't be used
+        let ts1 = table
+            .with_sequencer(&sequencer)
+            .create_tombstone(2, 6000, 21000, "tag1=UT")
+            .await;
+        // ts2 overlap with both pf3 and pf2
+        let ts2 = table
+            .with_sequencer(&sequencer)
+            .create_tombstone(11, 6000, 12000, "tag1=VT")
+            .await;
+        // ts3 does not overlap with any files
+        let ts3 = table
+            .with_sequencer(&sequencer)
+            .create_tombstone(22, 1000, 2000, "tag1=VT")
+            .await;
+        // ts4 overlpas with pf4
+        let ts4 = table
+            .with_sequencer(&sequencer)
+            .create_tombstone(24, 27000, 28000, "tag2=AA")
+            .await;
+        // should have 4 tomstones
+        let count = catalog.count_tombstones_for_table(table.table.id).await;
+        assert_eq!(count, 4);
+        // should not have any processed tombstones for any tombstones
+        let count = catalog.count_processed_tombstones(ts1.tombstone.id).await;
+        assert_eq!(count, 0);
+        let count = catalog.count_processed_tombstones(ts2.tombstone.id).await;
+        assert_eq!(count, 0);
+        let count = catalog.count_processed_tombstones(ts3.tombstone.id).await;
+        assert_eq!(count, 0);
+        let count = catalog.count_processed_tombstones(ts4.tombstone.id).await;
+        assert_eq!(count, 0);
+
+        // Create parquet files with tombstones
+        let pfwts2 = Arc::new(ParquetFileWithTombstone {
+            data: Arc::new(pf2),
+            tombstones: vec![ts2.tombstone.clone()],
+        }) as Arc<dyn FileMeta>;
+        let pfwts3 = Arc::new(ParquetFileWithTombstone {
+            data: Arc::new(pf3),
+            tombstones: vec![ts2.tombstone.clone()],
+        }) as Arc<dyn FileMeta>;
+        let pfwts4 = Arc::new(ParquetFileWithTombstone {
+            data: Arc::new(pf4),
+            tombstones: vec![ts4.tombstone.clone()],
+        }) as Arc<dyn FileMeta>;
+
+        // ------------------------------------------------
+        // Compact
+        compactor
+            .compact_partition(
+                partition.partition.id,
+                compactor.config.compaction_max_size_bytes(),
+                Some(vec![pfwts2, pfwts3, pfwts4]),
+            )
+            .await
+            .unwrap();
+
+        // Should have 3 non-soft-deleted files: pf1 not compacted and stay, and 2 newly created after compacting pf2, pf3, pf4
+        let files = catalog.list_by_table_not_to_delete(table.table.id).await;
+        assert_eq!(files.len(), 3);
+        // pf1 stay intact level 0
+        assert_eq!((files[0].id.get(), files[0].compaction_level), (1, 0));
+        // 2 newly created level-1 files as the result of compaction
+        assert_eq!((files[1].id.get(), files[2].compaction_level), (5, 1));
+        assert_eq!((files[2].id.get(), files[2].compaction_level), (6, 1));
+
+        // should have ts1 and ts3 that not involved in the commpaction process
+        // ts2 was removed because it was fully processed
+        let tss = catalog.list_tombstones_by_table(table.table.id).await;
+        assert_eq!(tss.len(), 2);
+        assert_eq!(tss[0].id.get(), ts1.tombstone.id.get());
+        assert_eq!(tss[1].id.get(), ts3.tombstone.id.get());
+
+        // processed tombstones of ts2 was created and deleted inside compact_partition function
+        let count = catalog.count_processed_tombstones(ts2.tombstone.id).await;
+        assert_eq!(count, 0);
+
+        // ------------------------------------------------
+        // Verify the parquet file content
+        let adapter = ParquetChunkAdapter::new(
+            Arc::new(CatalogCache::new(
+                catalog.catalog(),
+                catalog.time_provider(),
+            )),
+            catalog.object_store(),
+            catalog.metric_registry(),
+            catalog.time_provider(),
+        );
+        // create chunks for 2 files
+        let chunk_0 = adapter.new_querier_chunk(files[1].clone()).await.unwrap();
+        let chunk_1 = adapter.new_querier_chunk(files[2].clone()).await.unwrap();
+        // query the chunks
+        // least recent compacted first half (~90%)
+        let batches = collect_read_filter(&chunk_0).await;
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+------+------+-----------------------------+",
+                "| field_int | tag1 | tag2 | tag3 | time                        |",
+                "+-----------+------+------+------+-----------------------------+",
                 "| 1500      | WA   |      |      | 1970-01-01T00:00:00.000008Z |",
                 "| 270       | UT   |      |      | 1970-01-01T00:00:00.000025Z |",
                 "| 70        | UT   |      |      | 1970-01-01T00:00:00.000020Z |",
