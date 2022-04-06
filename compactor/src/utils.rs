@@ -52,19 +52,43 @@ impl GroupWithTombstones {
 }
 
 /// Wrapper of group of parquet files with their min time and total size
-#[derive(Debug, Clone, PartialEq)]
-pub struct GroupWithMinTimeAndSize<T>
-where
-    T: FileMeta,
-{
+#[derive(Debug, Clone)]
+pub struct GroupWithMinTimeAndSize {
     /// Parquet files
-    pub(crate) parquet_files: Vec<Arc<T>>,
+    pub(crate) parquet_files: Vec<Arc<dyn FileMeta>>,
 
     /// min time of all parquet_files
     pub(crate) min_time: Timestamp,
 
     /// total size of all file
     pub(crate) total_file_size_bytes: i64,
+}
+
+impl GroupWithMinTimeAndSize {
+    /// Return true if the group inc;ude the given file
+    pub fn contains(&self, file: &Arc<dyn FileMeta>) -> bool {
+        self.parquet_files
+            .iter()
+            .any(|f| f.parquet_file_id() == file.parquet_file_id())
+    }
+}
+
+impl PartialEq for GroupWithMinTimeAndSize {
+    fn eq(&self, other: &Self) -> bool {
+        if self.parquet_files.len() != other.parquet_files.len()
+            || self.min_time != other.min_time
+            || self.total_file_size_bytes != other.total_file_size_bytes
+        {
+            return false;
+        }
+
+        for f in &other.parquet_files {
+            if !self.contains(f) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Struct holding output of a compacted stream

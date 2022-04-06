@@ -173,7 +173,7 @@ async fn run_compactor(compactor: Arc<Compactor>, shutdown: CancellationToken) {
             let partition_id = c.partition_id;
             let handle = tokio::task::spawn(async move {
                 compactor
-                    .compact_partition(partition_id, max_file_size)
+                    .compact_partition(partition_id, max_file_size, None)
                     .await
             });
             used_size += c.file_size_bytes;

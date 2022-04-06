@@ -453,25 +453,42 @@ impl Compactor {
 
     /// Runs compaction in a partition resolving any tombstones and compacting data so that parquet
     /// files will be non-overlapping in time.
+    /// If no files are provided, the files will be gotten from the catalog
     pub async fn compact_partition(
         &self,
         partition_id: PartitionId,
         compaction_max_size_bytes: i64,
+        files: Option<Vec<Arc<dyn FileMeta>>>,
     ) -> Result<()> {
         let start_time = self.time_provider.now();
 
-        let parquet_files = self
-            .catalog
-            .repositories()
-            .await
-            .parquet_files()
-            .list_by_partition_not_to_delete(partition_id)
-            .await
-            .context(ListParquetFilesSnafu)?;
+        let parquet_files = match files {
+            // files provided, compact them
+            Some(files) => files,
+            None => {
+                // files not provided, get them from the catalog
+                let files = self
+                    .catalog
+                    .repositories()
+                    .await
+                    .parquet_files()
+                    .list_by_partition_not_to_delete(partition_id)
+                    .await
+                    .context(ListParquetFilesSnafu)?;
+
+                let files = files
+                    .iter()
+                    .map(|f| Arc::clone(&(*f)) as Arc<dyn FileMeta>)
+                    .collect::<Vec<_>>();
+
+                files
+            }
+        };
+
         if parquet_files.is_empty() {
             return Ok(());
         }
-        let sequencer_id = parquet_files[0].sequencer_id;
+        let sequencer_id = parquet_files[0].sequencer_id();
         let file_count = parquet_files.len();
 
         // Group overlapped files
@@ -565,13 +582,10 @@ impl Compactor {
     }
 
     // Group time-contiguous non-overlapped groups if their total size is smaller than a threshold
-    fn group_small_contiguous_groups<T>(
-        mut file_groups: Vec<GroupWithMinTimeAndSize<T>>,
+    fn group_small_contiguous_groups(
+        mut file_groups: Vec<GroupWithMinTimeAndSize>,
         compaction_max_size_bytes: i64,
-    ) -> Vec<Vec<Arc<T>>>
-    where
-        T: FileMeta,
-    {
+    ) -> Vec<Vec<Arc<dyn FileMeta>>> {
         let mut groups = Vec::with_capacity(file_groups.len());
         if file_groups.is_empty() {
             return groups;
@@ -882,10 +896,9 @@ impl Compactor {
 
     /// Given a list of parquet files that come from the same Table Partition, group files together
     /// if their (min_time, max_time) ranges overlap. Does not preserve or guarantee any ordering.
-    fn overlapped_groups<T>(mut parquet_files: Vec<Arc<T>>) -> Vec<GroupWithMinTimeAndSize<T>>
-    where
-        T: FileMeta,
-    {
+    fn overlapped_groups(
+        mut parquet_files: Vec<Arc<dyn FileMeta>>,
+    ) -> Vec<GroupWithMinTimeAndSize> {
         let mut groups = Vec::with_capacity(parquet_files.len());
 
         // While there are still files not in any group
@@ -1016,13 +1029,10 @@ impl Compactor {
         count_pf == count_pt
     }
 
-    async fn add_tombstones_to_groups<T>(
+    async fn add_tombstones_to_groups(
         &self,
-        groups: Vec<Vec<Arc<T>>>,
-    ) -> Result<Vec<GroupWithTombstones>>
-    where
-        T: FileMeta,
-    {
+        groups: Vec<Vec<Arc<dyn FileMeta>>>,
+    ) -> Result<Vec<GroupWithTombstones>> {
         let mut repo = self.catalog.repositories().await;
         let tombstone_repo = repo.tombstones();
 
@@ -1211,6 +1221,7 @@ mod tests {
             .compact_partition(
                 partition.partition.id,
                 compactor.config.compaction_max_size_bytes(),
+                None,
             )
             .await
             .unwrap();
@@ -1418,6 +1429,7 @@ mod tests {
             .compact_partition(
                 partition.partition.id,
                 compactor.config.compaction_max_size_bytes(),
+                None,
             )
             .await
             .unwrap();
@@ -1889,23 +1901,23 @@ mod tests {
     #[test]
     fn test_overlapped_groups_no_overlap() {
         // Given two files that don't overlap,
-        let pf1 = Arc::new(arbitrary_parquet_file(1, 2));
-        let pf2 = Arc::new(arbitrary_parquet_file(3, 4));
+        let pf1 = Arc::new(arbitrary_parquet_file(1, 2)) as Arc<dyn FileMeta>;
+        let pf2 = Arc::new(arbitrary_parquet_file(3, 4)) as Arc<dyn FileMeta>;
 
         let groups = Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
 
         // They should be 2 groups
         assert_eq!(groups.len(), 2, "There should have been two group");
 
-        groups[0].parquet_files.contains(&pf1);
-        groups[1].parquet_files.contains(&pf2);
+        groups[0].contains(&pf1);
+        groups[1].contains(&pf2);
     }
 
     #[test]
     fn test_overlapped_groups_with_overlap() {
         // Given two files that do overlap,
-        let pf1 = Arc::new(arbitrary_parquet_file(1, 3));
-        let pf2 = Arc::new(arbitrary_parquet_file(2, 4));
+        let pf1 = Arc::new(arbitrary_parquet_file(1, 3)) as Arc<dyn FileMeta>;
+        let pf2 = Arc::new(arbitrary_parquet_file(2, 4)) as Arc<dyn FileMeta>;
 
         let groups = Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
 
@@ -1918,21 +1930,22 @@ mod tests {
             2,
             "The one group should have contained 2 items"
         );
-        assert!(group.parquet_files.contains(&pf1));
-        assert!(group.parquet_files.contains(&pf2));
+        assert!(group.contains(&pf1));
+        assert!(group.contains(&pf2));
     }
 
     #[test]
     fn test_overlapped_groups_many_groups() {
-        let overlaps_many = Arc::new(arbitrary_parquet_file(5, 10));
-        let contained_completely_within = Arc::new(arbitrary_parquet_file(6, 7));
-        let max_equals_min = Arc::new(arbitrary_parquet_file(3, 5));
-        let min_equals_max = Arc::new(arbitrary_parquet_file(10, 12));
+        let overlaps_many = Arc::new(arbitrary_parquet_file(5, 10)) as Arc<dyn FileMeta>;
+        let contained_completely_within =
+            Arc::new(arbitrary_parquet_file(6, 7)) as Arc<dyn FileMeta>;
+        let max_equals_min = Arc::new(arbitrary_parquet_file(3, 5)) as Arc<dyn FileMeta>;
+        let min_equals_max = Arc::new(arbitrary_parquet_file(10, 12)) as Arc<dyn FileMeta>;
 
-        let alone = Arc::new(arbitrary_parquet_file(30, 35));
+        let alone = Arc::new(arbitrary_parquet_file(30, 35)) as Arc<dyn FileMeta>;
 
-        let another = Arc::new(arbitrary_parquet_file(13, 15));
-        let partial_overlap = Arc::new(arbitrary_parquet_file(14, 16));
+        let another = Arc::new(arbitrary_parquet_file(13, 15)) as Arc<dyn FileMeta>;
+        let partial_overlap = Arc::new(arbitrary_parquet_file(14, 16)) as Arc<dyn FileMeta>;
 
         // Given a bunch of files in an arbitrary order,
         let all = vec![
@@ -1956,7 +1969,7 @@ mod tests {
         let alone_group = &groups[2];
         assert_eq!(alone_group.min_time, Timestamp::new(30));
         assert!(
-            alone_group.parquet_files.contains(&alone),
+            alone_group.contains(&alone),
             "Actually contains: {:#?}",
             alone_group
         );
@@ -1964,12 +1977,12 @@ mod tests {
         let another_group = &groups[1];
         assert_eq!(another_group.min_time, Timestamp::new(13));
         assert!(
-            another_group.parquet_files.contains(&another),
+            another_group.contains(&another),
             "Actually contains: {:#?}",
             another_group
         );
         assert!(
-            another_group.parquet_files.contains(&partial_overlap),
+            another_group.contains(&partial_overlap),
             "Actually contains: {:#?}",
             another_group
         );
@@ -1977,24 +1990,22 @@ mod tests {
         let many_group = &groups[0];
         assert_eq!(many_group.min_time, Timestamp::new(3));
         assert!(
-            many_group.parquet_files.contains(&overlaps_many),
+            many_group.contains(&overlaps_many),
             "Actually contains: {:#?}",
             many_group
         );
         assert!(
-            many_group
-                .parquet_files
-                .contains(&contained_completely_within),
+            many_group.contains(&contained_completely_within),
             "Actually contains: {:#?}",
             many_group
         );
         assert!(
-            many_group.parquet_files.contains(&max_equals_min),
+            many_group.contains(&max_equals_min),
             "Actually contains: {:#?}",
             many_group
         );
         assert!(
-            many_group.parquet_files.contains(&min_equals_max),
+            many_group.contains(&min_equals_max),
             "Actually contains: {:#?}",
             many_group
         );
@@ -2003,8 +2014,8 @@ mod tests {
     #[test]
     fn test_group_small_contiguous_overlapped_groups() {
         // Given two files that don't overlap,
-        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100));
-        let pf2 = Arc::new(arbitrary_parquet_file_with_size(3, 4, 200));
+        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100)) as Arc<dyn FileMeta>;
+        let pf2 = Arc::new(arbitrary_parquet_file_with_size(3, 4, 200)) as Arc<dyn FileMeta>;
 
         let overlapped_groups =
             Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
@@ -2029,7 +2040,8 @@ mod tests {
             Compactor::group_small_contiguous_groups(overlapped_groups, compaction_max_size_bytes);
         // 2 small groups should be grouped in one
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups, vec![vec![pf1, pf2]]);
+        assert_eq!(groups[0][0].parquet_file_id(), pf1.parquet_file_id());
+        assert_eq!(groups[0][1].parquet_file_id(), pf2.parquet_file_id());
     }
 
     #[test]
@@ -2037,12 +2049,12 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // Given two files that don't overlap,
-        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100));
+        let pf1 = Arc::new(arbitrary_parquet_file_with_size(1, 2, 100)) as Arc<dyn FileMeta>;
         let pf2 = Arc::new(arbitrary_parquet_file_with_size(
             3,
             4,
             compaction_max_size_bytes,
-        )); // too large to group
+        )) as Arc<dyn FileMeta>; // too large to group
 
         let overlapped_groups =
             Compactor::overlapped_groups(vec![Arc::clone(&pf1), Arc::clone(&pf2)]);
@@ -2066,7 +2078,8 @@ mod tests {
             Compactor::group_small_contiguous_groups(overlapped_groups, compaction_max_size_bytes);
         // Files too big to group further
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups, vec![vec![pf1], vec![pf2]]);
+        assert_eq!(groups[0][0].parquet_file_id(), pf1.parquet_file_id());
+        assert_eq!(groups[1][0].parquet_file_id(), pf2.parquet_file_id());
     }
 
     #[test]
@@ -2074,21 +2087,26 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped and very small
-        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
-        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
-        let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(3, 5, 400));
-        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
+        let overlaps_many =
+            Arc::new(arbitrary_parquet_file_with_size(5, 10, 200)) as Arc<dyn FileMeta>;
+        let contained_completely_within =
+            Arc::new(arbitrary_parquet_file_with_size(6, 7, 300)) as Arc<dyn FileMeta>;
+        let max_equals_min =
+            Arc::new(arbitrary_parquet_file_with_size(3, 5, 400)) as Arc<dyn FileMeta>;
+        let min_equals_max =
+            Arc::new(arbitrary_parquet_file_with_size(10, 12, 500)) as Arc<dyn FileMeta>;
 
         // newest files and very large
         let alone = Arc::new(arbitrary_parquet_file_with_size(
             30,
             35,
             compaction_max_size_bytes + 200,
-        )); // too large to group
+        )) as Arc<dyn FileMeta>; // too large to group
 
         // small files in  the middle
-        let another = Arc::new(arbitrary_parquet_file_with_size(13, 15, 1000));
-        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
+        let another = Arc::new(arbitrary_parquet_file_with_size(13, 15, 1000)) as Arc<dyn FileMeta>;
+        let partial_overlap =
+            Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000)) as Arc<dyn FileMeta>;
 
         // Given a bunch of files in an arbitrary order,
         let all = vec![
@@ -2112,15 +2130,15 @@ mod tests {
         assert_eq!(groups.len(), 2);
         // first group includes 6 oldest files in 2 overlapped groups
         assert_eq!(groups[0].len(), 6);
-        assert!(groups[0].contains(&overlaps_many));
-        assert!(groups[0].contains(&contained_completely_within));
-        assert!(groups[0].contains(&max_equals_min));
-        assert!(groups[0].contains(&min_equals_max));
-        assert!(groups[0].contains(&another));
-        assert!(groups[0].contains(&partial_overlap));
+        assert!(contains(&groups[0], &overlaps_many));
+        assert!(contains(&groups[0], &contained_completely_within));
+        assert!(contains(&groups[0], &max_equals_min));
+        assert!(contains(&groups[0], &min_equals_max));
+        assert!(contains(&groups[0], &another));
+        assert!(contains(&groups[0], &partial_overlap));
         // second group includes the one newest file
         assert_eq!(groups[1].len(), 1);
-        assert!(groups[1].contains(&alone));
+        assert!(contains(&groups[1], &alone));
     }
 
     #[test]
@@ -2128,29 +2146,33 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped  and large
-        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
-        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
+        let overlaps_many =
+            Arc::new(arbitrary_parquet_file_with_size(5, 10, 200)) as Arc<dyn FileMeta>;
+        let contained_completely_within =
+            Arc::new(arbitrary_parquet_file_with_size(6, 7, 300)) as Arc<dyn FileMeta>;
         let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(
             3,
             5,
             compaction_max_size_bytes + 400,
-        )); // too large to group
-        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
+        )) as Arc<dyn FileMeta>; // too large to group
+        let min_equals_max =
+            Arc::new(arbitrary_parquet_file_with_size(10, 12, 500)) as Arc<dyn FileMeta>;
 
         // newest files and large
         let alone = Arc::new(arbitrary_parquet_file_with_size(
             30,
             35,
             compaction_max_size_bytes + 200,
-        )); // too large to group
+        )) as Arc<dyn FileMeta>; // too large to group
 
         // files in  the middle and also large
         let another = Arc::new(arbitrary_parquet_file_with_size(
             13,
             15,
             compaction_max_size_bytes + 100,
-        )); // too large to group
-        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
+        )) as Arc<dyn FileMeta>; // too large to group
+        let partial_overlap =
+            Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000)) as Arc<dyn FileMeta>;
 
         // Given a bunch of files in an arbitrary order
         let all = vec![
@@ -2174,17 +2196,17 @@ mod tests {
         assert_eq!(groups.len(), 3);
         // first group includes 4 oldest files
         assert_eq!(groups[0].len(), 4);
-        assert!(groups[0].contains(&overlaps_many));
-        assert!(groups[0].contains(&contained_completely_within));
-        assert!(groups[0].contains(&max_equals_min));
-        assert!(groups[0].contains(&min_equals_max));
+        assert!(contains(&groups[0], &overlaps_many));
+        assert!(contains(&groups[0], &contained_completely_within));
+        assert!(contains(&groups[0], &max_equals_min));
+        assert!(contains(&groups[0], &min_equals_max));
         // second group
         assert_eq!(groups[1].len(), 2);
-        assert!(groups[1].contains(&another));
-        assert!(groups[1].contains(&partial_overlap));
+        assert!(contains(&groups[1], &another));
+        assert!(contains(&groups[1], &partial_overlap));
         // third group
         assert_eq!(groups[2].len(), 1);
-        assert!(groups[2].contains(&alone));
+        assert!(contains(&groups[2], &alone));
     }
 
     #[test]
@@ -2192,21 +2214,26 @@ mod tests {
         let compaction_max_size_bytes = 100000;
 
         // oldest overlapped and very small
-        let overlaps_many = Arc::new(arbitrary_parquet_file_with_size(5, 10, 200));
-        let contained_completely_within = Arc::new(arbitrary_parquet_file_with_size(6, 7, 300));
-        let max_equals_min = Arc::new(arbitrary_parquet_file_with_size(3, 5, 400));
-        let min_equals_max = Arc::new(arbitrary_parquet_file_with_size(10, 12, 500));
+        let overlaps_many =
+            Arc::new(arbitrary_parquet_file_with_size(5, 10, 200)) as Arc<dyn FileMeta>;
+        let contained_completely_within =
+            Arc::new(arbitrary_parquet_file_with_size(6, 7, 300)) as Arc<dyn FileMeta>;
+        let max_equals_min =
+            Arc::new(arbitrary_parquet_file_with_size(3, 5, 400)) as Arc<dyn FileMeta>;
+        let min_equals_max =
+            Arc::new(arbitrary_parquet_file_with_size(10, 12, 500)) as Arc<dyn FileMeta>;
 
         // newest files and small
-        let alone = Arc::new(arbitrary_parquet_file_with_size(30, 35, 200));
+        let alone = Arc::new(arbitrary_parquet_file_with_size(30, 35, 200)) as Arc<dyn FileMeta>;
 
         // large files in  the middle
         let another = Arc::new(arbitrary_parquet_file_with_size(
             13,
             15,
             compaction_max_size_bytes + 100,
-        )); // too large to group
-        let partial_overlap = Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000));
+        )) as Arc<dyn FileMeta>; // too large to group
+        let partial_overlap =
+            Arc::new(arbitrary_parquet_file_with_size(14, 16, 2000)) as Arc<dyn FileMeta>;
 
         // Given a bunch of files in an arbitrary order
         let all = vec![
@@ -2230,17 +2257,17 @@ mod tests {
         assert_eq!(groups.len(), 3);
         // first group includes 4 oldest files
         assert_eq!(groups[0].len(), 4);
-        assert!(groups[0].contains(&overlaps_many));
-        assert!(groups[0].contains(&contained_completely_within));
-        assert!(groups[0].contains(&max_equals_min));
-        assert!(groups[0].contains(&min_equals_max));
+        assert!(contains(&groups[0], &overlaps_many));
+        assert!(contains(&groups[0], &contained_completely_within));
+        assert!(contains(&groups[0], &max_equals_min));
+        assert!(contains(&groups[0], &min_equals_max));
         // second group
         assert_eq!(groups[1].len(), 2);
-        assert!(groups[1].contains(&another));
-        assert!(groups[1].contains(&partial_overlap));
+        assert!(contains(&groups[1], &another));
+        assert!(contains(&groups[1], &partial_overlap));
         // third group
         assert_eq!(groups[2].len(), 1);
-        assert!(groups[2].contains(&alone));
+        assert!(contains(&groups[2], &alone));
     }
 
     #[tokio::test]
@@ -2313,8 +2340,8 @@ mod tests {
 
             ..p1.clone()
         };
-        let pf1 = Arc::new(txn.parquet_files().create(p1).await.unwrap());
-        let pf2 = Arc::new(txn.parquet_files().create(p2).await.unwrap());
+        let pf1 = Arc::new(txn.parquet_files().create(p1).await.unwrap()) as Arc<dyn FileMeta>;
+        let pf2 = Arc::new(txn.parquet_files().create(p2).await.unwrap()) as Arc<dyn FileMeta>;
 
         let parquet_files = vec![Arc::clone(&pf1), Arc::clone(&pf2)];
         let groups = vec![
@@ -2396,7 +2423,7 @@ mod tests {
         let actual_pf1 = group_with_tombstones
             .parquet_files
             .iter()
-            .find(|pf| pf.parquet_file_id() == pf1.id)
+            .find(|pf| pf.parquet_file_id() == pf1.parquet_file_id())
             .unwrap();
         let mut actual_pf1_tombstones: Vec<_> =
             actual_pf1.tombstones.iter().map(|t| t.id).collect();
@@ -2406,7 +2433,7 @@ mod tests {
         let actual_pf2 = group_with_tombstones
             .parquet_files
             .iter()
-            .find(|pf| pf.parquet_file_id() == pf2.id)
+            .find(|pf| pf.parquet_file_id() == pf2.parquet_file_id())
             .unwrap();
         let mut actual_pf2_tombstones: Vec<_> =
             actual_pf2.tombstones.iter().map(|t| t.id).collect();
@@ -2867,5 +2894,14 @@ mod tests {
             },
         ];
         assert_eq!(expect, candidates);
+    }
+
+    // Test Utils
+
+    // retun true if the given list of files contain the given file
+    fn contains(files: &[Arc<dyn FileMeta>], file: &Arc<dyn FileMeta>) -> bool {
+        files
+            .iter()
+            .any(|f| f.parquet_file_id() == file.parquet_file_id())
     }
 }

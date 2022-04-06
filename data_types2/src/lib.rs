@@ -10,6 +10,7 @@
     clippy::clone_on_ref_ptr
 )]
 
+use async_trait::async_trait;
 use influxdb_line_protocol::FieldValue;
 use predicate::{delete_predicate::parse_delete_predicate, Predicate};
 use schema::{builder::SchemaBuilder, InfluxColumnType, InfluxFieldType, Schema};
@@ -703,11 +704,12 @@ pub fn tombstones_to_delete_predicates_iter(
     })
 }
 
-/// Error type for [`FileMeta`] operations.
-pub type FileMetaError = Box<dyn std::error::Error + Send + Sync + 'static>;
-
 /// Collection of funtions a ParquetFile or its wrapper can provide
-pub trait FileMeta: Sync + Send + Clone + std::fmt::Debug + 'static {
+#[async_trait]
+pub trait FileMeta: Debug + Sync + Send + 'static {
+    /// Parquet file id
+    fn parquet_file_id(&self) -> ParquetFileId;
+
     /// Sequence id
     fn sequencer_id(&self) -> SequencerId;
 
@@ -736,10 +738,15 @@ pub trait FileMeta: Sync + Send + Clone + std::fmt::Debug + 'static {
     fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone;
 }
 
-impl<P> FileMeta for Arc<P>
+impl<T> FileMeta for Arc<T>
 where
-    P: FileMeta,
+    T: FileMeta,
 {
+    /// Parquet file id
+    fn parquet_file_id(&self) -> ParquetFileId {
+        self.as_ref().parquet_file_id()
+    }
+
     /// Sequence id
     fn sequencer_id(&self) -> SequencerId {
         self.as_ref().sequencer_id()
@@ -824,6 +831,10 @@ pub struct ParquetFile {
 }
 
 impl FileMeta for ParquetFile {
+    fn parquet_file_id(&self) -> ParquetFileId {
+        self.id
+    }
+
     fn sequencer_id(&self) -> SequencerId {
         self.sequencer_id
     }
@@ -899,13 +910,17 @@ pub struct ParquetFileParams {
 
 /// Wrapper of a parquet file and its tombstones
 #[allow(missing_docs)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParquetFileWithTombstone {
     pub data: Arc<ParquetFile>,
     pub tombstones: Vec<Tombstone>,
 }
 
 impl FileMeta for ParquetFileWithTombstone {
+    fn parquet_file_id(&self) -> ParquetFileId {
+        self.data.id
+    }
+
     fn sequencer_id(&self) -> SequencerId {
         self.data.sequencer_id
     }

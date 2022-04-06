@@ -1075,6 +1075,7 @@ dependencies = [
 name = "data_types2"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "data_types",
  "influxdb_line_protocol",
  "mutable_batch",
