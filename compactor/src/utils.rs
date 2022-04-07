@@ -13,6 +13,7 @@ use std::{
 
 /// Wrapper of a group of parquet files and their tombstones that overlap in time and should be
 /// considered during compaction.
+#[derive(Debug)]
 pub struct GroupWithTombstones {
     /// Each file with the set of tombstones relevant to it
     pub(crate) parquet_files: Vec<ParquetFileWithTombstone>,
