@@ -445,12 +445,6 @@ impl TableRepo for MemTxn {
             .iter()
             .find(|t| t.name == table_name && t.namespace_id == namespace_id)
         {
-            let parquet_max_sequence_number = stage
-                .parquet_files
-                .iter()
-                .filter(|p| p.sequencer_id == sequencer_id && p.table_id == table.id)
-                .max_by_key(|p| p.max_sequence_number)
-                .map(|p| p.max_sequence_number);
             let tombstone_max_sequence_number = stage
                 .tombstones
                 .iter()
@@ -461,7 +455,6 @@ impl TableRepo for MemTxn {
             return Ok(Some(TablePersistInfo {
                 sequencer_id,
                 table_id: table.id,
-                parquet_max_sequence_number,
                 tombstone_max_sequence_number,
             }));
         }
@@ -692,6 +685,7 @@ impl PartitionRepo for MemTxn {
                     sequencer_id,
                     table_id,
                     partition_key: key.to_string(),
+                    sort_key: None,
                 };
                 stage.partitions.push(p);
                 stage.partitions.last().unwrap()
@@ -775,6 +769,21 @@ impl PartitionRepo for MemTxn {
         }
 
         Ok(None)
+    }
+
+    async fn update_sort_key(
+        &mut self,
+        partition_id: PartitionId,
+        sort_key: &str,
+    ) -> Result<Partition> {
+        let stage = self.stage();
+        match stage.partitions.iter_mut().find(|p| p.id == partition_id) {
+            Some(p) => {
+                p.sort_key = Some(sort_key.to_string());
+                Ok(p.clone())
+            }
+            None => Err(Error::PartitionNotFound { id: partition_id }),
+        }
     }
 }
 

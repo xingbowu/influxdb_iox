@@ -799,7 +799,6 @@ WHERE namespace_id = $1;
             r#"
 WITH tid as (SELECT id FROM table_name WHERE name = $2 AND namespace_id = $3)
 SELECT $1 as sequencer_id, id as table_id,
-       parquet_file.max_sequence_number AS parquet_max_sequence_number,
        tombstone.sequence_number as tombstone_max_sequence_number
 FROM tid
 LEFT JOIN (
@@ -809,13 +808,6 @@ LEFT JOIN (
   ORDER BY sequence_number DESC
   LIMIT 1
 ) tombstone ON tombstone.table_id = tid.id
-LEFT JOIN (
-  SELECT parquet_file.table_id, max_sequence_number
-  FROM parquet_file
-  WHERE parquet_file.sequencer_id = $1 AND parquet_file.table_id = (SELECT id from tid)
-  ORDER BY max_sequence_number DESC
-  LIMIT 1
-) parquet_file ON parquet_file.table_id = tid.id;
             "#,
         )
         .bind(&sequencer_id) // $1
@@ -1157,10 +1149,7 @@ RETURNING *;
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Partition>> {
         sqlx::query_as::<_, Partition>(
             r#"
-SELECT partition.id as id,
-       partition.sequencer_id as sequencer_id,
-       partition.table_id as table_id,
-       partition.partition_key as partition_key
+SELECT partition.*
 FROM table_name
 INNER JOIN partition on partition.table_id = table_name.id
 WHERE table_name.namespace_id = $1;
@@ -1178,8 +1167,7 @@ WHERE table_name.namespace_id = $1;
     ) -> Result<Option<PartitionInfo>> {
         let info = sqlx::query(
             r#"
-SELECT namespace.name as namespace_name, table_name.name as table_name, partition.id,
-       partition.sequencer_id, partition.table_id, partition.partition_key
+SELECT namespace.name as namespace_name, table_name.name as table_name, partition.*
 FROM partition
 INNER JOIN table_name on table_name.id = partition.table_id
 INNER JOIN namespace on namespace.id = table_name.namespace_id
@@ -1198,6 +1186,7 @@ WHERE partition.id = $1;
             sequencer_id: info.get("sequencer_id"),
             table_id: info.get("table_id"),
             partition_key: info.get("partition_key"),
+            sort_key: info.get("sort_key"),
         };
 
         Ok(Some(PartitionInfo {
@@ -1205,6 +1194,32 @@ WHERE partition.id = $1;
             table_name,
             partition,
         }))
+    }
+
+    async fn update_sort_key(
+        &mut self,
+        partition_id: PartitionId,
+        sort_key: &str,
+    ) -> Result<Partition> {
+        let rec = sqlx::query_as::<_, Partition>(
+            r#"
+UPDATE partition
+SET sort_key = $1
+WHERE id = $2
+RETURNING *;
+        "#,
+        )
+        .bind(&sort_key)
+        .bind(&partition_id)
+        .fetch_one(&mut self.inner)
+        .await;
+
+        let partition = rec.map_err(|e| match e {
+            sqlx::Error::RowNotFound => Error::PartitionNotFound { id: partition_id },
+            _ => Error::SqlxError { source: e },
+        })?;
+
+        Ok(partition)
     }
 }
 
@@ -1575,7 +1590,7 @@ FROM parquet_file
 WHERE parquet_file.sequencer_id = $1
   AND parquet_file.compaction_level = 0
   AND parquet_file.to_delete IS NULL
-  LIMIT 10000;
+  LIMIT 1000;
         "#,
         )
         .bind(&sequencer_id) // $1

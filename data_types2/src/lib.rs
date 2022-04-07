@@ -128,7 +128,11 @@ impl ColumnId {
     }
 }
 
-/// Unique ID for a `Sequencer`
+/// Unique ID for a `Sequencer`. Note this is NOT the same as the
+/// "sequencer_number" in the `write_buffer` which currently means
+/// "kafka partition".
+///
+/// https://github.com/influxdata/influxdb_iox/issues/4237
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct SequencerId(i16);
@@ -653,6 +657,9 @@ pub struct Partition {
     pub table_id: TableId,
     /// the string key of the partition
     pub partition_key: String,
+    /// The sort key for the partition. Should be computed on the first persist operation for
+    /// this partition and updated if new tag columns are added.
+    pub sort_key: Option<String>,
 }
 
 /// Information for a partition from the catalog.

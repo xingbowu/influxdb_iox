@@ -9,8 +9,8 @@ use arrow::record_batch::RecordBatch;
 use arrow_util::assert_batches_eq;
 use bitflags::bitflags;
 use data_types2::{
-    NamespaceId, PartitionId, SequenceNumber, SequencerId, TableId, Timestamp, Tombstone,
-    TombstoneId,
+    KafkaPartition, NamespaceId, PartitionId, SequenceNumber, SequencerId, TableId, Timestamp,
+    Tombstone, TombstoneId,
 };
 use iox_catalog::{
     interface::{Catalog, INITIAL_COMPACTION_LEVEL},
@@ -633,11 +633,9 @@ pub fn make_ingester_data(two_partitions: bool, loc: DataLocation) -> IngesterDa
     let empty_tbl = Arc::new(tokio::sync::RwLock::new(TableData::new(
         empty_table_id,
         None,
-        None,
     )));
     let data_tbl = Arc::new(tokio::sync::RwLock::new(TableData::new_for_test(
         data_table_id,
-        None,
         None,
         partitions,
     )));
@@ -652,7 +650,8 @@ pub fn make_ingester_data(two_partitions: bool, loc: DataLocation) -> IngesterDa
     namespaces.insert(TEST_NAMESPACE.to_string(), data_ns);
 
     // One sequencer/shard that contains 2 namespaces
-    let seq_data = SequencerData::new_for_test(namespaces);
+    let kafka_partition = KafkaPartition::new(0);
+    let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
     let mut sequencers = BTreeMap::new();
     sequencers.insert(seq_id, seq_data);
 
@@ -683,7 +682,7 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
 
     // Two tables: one empty and one with data of one or two partitions
     let mut tables = BTreeMap::new();
-    let data_tbl = TableData::new_for_test(data_table_id, None, None, partitions);
+    let data_tbl = TableData::new_for_test(data_table_id, None, partitions);
     tables.insert(
         TEST_TABLE.to_string(),
         Arc::new(tokio::sync::RwLock::new(data_tbl)),
@@ -695,7 +694,8 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
     namespaces.insert(TEST_NAMESPACE.to_string(), data_ns);
 
     // One sequencer/shard that contains 1 namespace
-    let seq_data = SequencerData::new_for_test(namespaces);
+    let kafka_partition = KafkaPartition::new(0);
+    let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
     let mut sequencers = BTreeMap::new();
     sequencers.insert(seq_id, seq_data);
 
