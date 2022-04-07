@@ -423,13 +423,15 @@ impl Compactor {
                 }
 
                 // Group parquet_file_with_tombstones into partition and add it into the partitions
-                let mut table_partittions: BTreeMap<PartitionId, Vec<ParquetFileWithTombstone>> =
-                    BTreeMap::new();
+                let mut table_partittions: BTreeMap<
+                    PartitionId,
+                    Vec<Arc<ParquetFileWithTombstone>>,
+                > = BTreeMap::new();
                 for (_, pf) in parquet_file_with_tombstones {
                     let list = table_partittions
                         .entry(pf.data.partition_id)
                         .or_insert_with(Vec::new);
-                    list.push(pf);
+                    list.push(Arc::new(pf));
                 }
 
                 let ps = table_partittions
@@ -1298,6 +1300,8 @@ mod tests {
     //
     #[tokio::test]
     async fn test_compact_cold_partition_with_files() {
+        // --------------------------------------------------------------
+        // Step 1: DB setup including adding parquet files and tombstones
         let catalog = TestCatalog::new();
 
         let lp = vec![
@@ -1315,7 +1319,7 @@ mod tests {
             .with_sequencer(&sequencer)
             .create_partition("part")
             .await;
-        let file = partition
+        let _file = partition
             .create_parquet_file_with_min_max_and_creation_time(
                 &lp,
                 1,
@@ -1338,14 +1342,10 @@ mod tests {
         let count = catalog.count_tombstones_for_table(table.table.id).await;
         assert_eq!(count, 1);
 
-        // Parquet file with tombstones
-        let pfwt = Arc::new(ParquetFileWithTombstone {
-            data: Arc::new(file.parquet_file.clone()),
-            tombstones: vec![tombstone.tombstone.clone()],
-        }) as Arc<dyn FileMeta>;
+        // -------------------------------------------------------------------------------
+        // Step 2: Get cadidate partitions and their files with tombstones to be compacted
 
-        // ------------------------------------------------
-        // Compact
+        // Initialize the compactor
         let compactor = Compactor::new(
             vec![sequencer.sequencer.id],
             Arc::clone(&catalog.catalog),
@@ -1357,11 +1357,26 @@ mod tests {
             Arc::new(metric::Registry::new()),
         );
 
+        // Get files that need to apply the available tombstones
+        let partitions_with_files = compactor.partitions_with_files_to_compact().await.unwrap();
+        // should inlcude only one partition
+        assert_eq!(partitions_with_files.len(), 1);
+        let files = partitions_with_files[0]
+            .files_with_tombstones
+            .clone()
+            .iter()
+            .map(|f| Arc::clone(&(*f)) as Arc<dyn FileMeta>)
+            .collect::<Vec<_>>();
+        // should have one file
+        assert_eq!(files.len(), 1);
+
+        // ------------------------------------------------
+        // Step 3: Compact the files
         compactor
             .compact_partition(
                 partition.partition.id,
                 compactor.config.compaction_max_size_bytes(),
-                Some(vec![pfwt]),
+                Some(files), //vec![pfwt]),
             )
             .await
             .unwrap();
@@ -1467,6 +1482,8 @@ mod tests {
             .create_partition("part")
             .await;
         let time = Arc::new(SystemProvider::new());
+
+        // Initialize the compactor
         let compactor = Compactor::new(
             vec![sequencer.sequencer.id],
             Arc::clone(&catalog.catalog),
@@ -1641,6 +1658,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_compact_cold_partition_with_many_files_many_tombstones() {
+        // --------------------------------------------------------------
+        // Step 1: DB setup including adding parquet files and tombstones
+
         let catalog = TestCatalog::new();
 
         // lp1 does not overlap with any
@@ -1681,6 +1701,8 @@ mod tests {
             .create_partition("part")
             .await;
         let time = Arc::new(SystemProvider::new());
+
+        // Initiliaze the compactor
         let compactor = Compactor::new(
             vec![sequencer.sequencer.id],
             Arc::clone(&catalog.catalog),
@@ -1694,7 +1716,7 @@ mod tests {
 
         // parquet files
         // pf1 does not overlap with any tombstones and won't be provided to the compact function => will stay intact level 0
-        let _pf1 = partition
+        let pf1 = partition
             .create_parquet_file_with_min_max_size_and_creation_time(
                 &lp1,
                 1,
@@ -1750,13 +1772,13 @@ mod tests {
         let count = catalog.count_level_0_files(sequencer.sequencer.id).await;
         assert_eq!(count, 4);
 
-        // create 3 tombstones
+        // create tombstones
         // ts1 overlaps with pf1 and pf2 but issued before pf1 and pf2 hence it won't be used
         let ts1 = table
             .with_sequencer(&sequencer)
             .create_tombstone(2, 6000, 21000, "tag1=UT")
             .await;
-        // ts2 overlap with both pf3 and pf2
+        // ts2 overlaps with both pf3 and pf2
         let ts2 = table
             .with_sequencer(&sequencer)
             .create_tombstone(11, 6000, 12000, "tag1=VT")
@@ -1784,27 +1806,48 @@ mod tests {
         let count = catalog.count_processed_tombstones(ts4.tombstone.id).await;
         assert_eq!(count, 0);
 
-        // Create parquet files with tombstones
+        // -------------------------------------------------------------------------------
+        // Step 2: Get cadidate partitions and their files with tombstones to be compacted
+
+        // Get files that need to apply the available tombstones
+        let partitions_with_files = compactor.partitions_with_files_to_compact().await.unwrap();
+        // should inlcude only one partition
+        assert_eq!(partitions_with_files.len(), 1);
+
+        // Verify the its files
+        let files = partitions_with_files[0].files_with_tombstones.clone();
+        // should have 3 files
+        assert_eq!(files.len(), 3);
+        // Expected parquet files with tombstones
         let pfwts2 = Arc::new(ParquetFileWithTombstone {
             data: Arc::new(pf2),
             tombstones: vec![ts2.tombstone.clone()],
-        }) as Arc<dyn FileMeta>;
+        });
         let pfwts3 = Arc::new(ParquetFileWithTombstone {
             data: Arc::new(pf3),
             tombstones: vec![ts2.tombstone.clone()],
-        }) as Arc<dyn FileMeta>;
+        });
         let pfwts4 = Arc::new(ParquetFileWithTombstone {
             data: Arc::new(pf4),
             tombstones: vec![ts4.tombstone.clone()],
-        }) as Arc<dyn FileMeta>;
+        });
+        assert!(files.contains(&pfwts2));
+        assert!(files.contains(&pfwts3));
+        assert!(files.contains(&pfwts4));
+
+        // cast to FileMeta
+        let files = files
+            .iter()
+            .map(|f| Arc::clone(&(*f)) as Arc<dyn FileMeta>)
+            .collect::<Vec<_>>();
 
         // ------------------------------------------------
-        // Compact
+        // Step 3: Compact the files
         compactor
             .compact_partition(
                 partition.partition.id,
                 compactor.config.compaction_max_size_bytes(),
-                Some(vec![pfwts2, pfwts3, pfwts4]),
+                Some(files),
             )
             .await
             .unwrap();
@@ -1813,7 +1856,7 @@ mod tests {
         let files = catalog.list_by_table_not_to_delete(table.table.id).await;
         assert_eq!(files.len(), 3);
         // pf1 stay intact level 0
-        assert_eq!((files[0].id.get(), files[0].compaction_level), (1, 0));
+        assert_eq!((files[0].id, files[0].compaction_level), (pf1.id, 0));
         // 2 newly created level-1 files as the result of compaction
         assert_eq!((files[1].id.get(), files[2].compaction_level), (5, 1));
         assert_eq!((files[2].id.get(), files[2].compaction_level), (6, 1));

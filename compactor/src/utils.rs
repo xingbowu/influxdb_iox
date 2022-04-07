@@ -144,5 +144,5 @@ pub struct PartitionWithParquetFiles {
     pub(crate) sequencer_id: SequencerId,
     pub(crate) table_id: TableId,
     pub(crate) partition_id: PartitionId,
-    pub(crate) files_with_tombstones: Vec<ParquetFileWithTombstone>,
+    pub(crate) files_with_tombstones: Vec<Arc<ParquetFileWithTombstone>>,
 }
