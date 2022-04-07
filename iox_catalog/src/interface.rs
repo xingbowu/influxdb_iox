@@ -667,7 +667,7 @@ pub(crate) mod test_helpers {
     use ::test_helpers::{assert_contains, tracing::TracingCapture};
     use data_types2::ColumnId;
     use metric::{Attributes, Metric, U64Histogram};
-    use std::{ops::Add, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
 
     pub(crate) async fn test_catalog(catalog: Arc<dyn Catalog>) {
         test_setup(Arc::clone(&catalog)).await;
@@ -1331,16 +1331,14 @@ pub(crate) mod test_helpers {
             .await
             .unwrap();
 
-        let min_time = Timestamp::new(1);
-        let max_time = Timestamp::new(10);
         let t1 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 sequencer.id,
                 SequenceNumber::new(1),
-                min_time,
-                max_time,
+                Timestamp::new(1),
+                Timestamp::new(10),
                 "whatevs",
             )
             .await
@@ -1348,8 +1346,8 @@ pub(crate) mod test_helpers {
         assert!(t1.id > TombstoneId::new(0));
         assert_eq!(t1.sequencer_id, sequencer.id);
         assert_eq!(t1.sequence_number, SequenceNumber::new(1));
-        assert_eq!(t1.min_time, min_time);
-        assert_eq!(t1.max_time, max_time);
+        assert_eq!(t1.min_time, Timestamp::new(1));
+        assert_eq!(t1.max_time, Timestamp::new(10));
         assert_eq!(t1.serialized_predicate, "whatevs");
         let t2 = repos
             .tombstones()
@@ -1357,8 +1355,8 @@ pub(crate) mod test_helpers {
                 other_table.id,
                 sequencer.id,
                 SequenceNumber::new(2),
-                min_time.add(10),
-                max_time.add(10),
+                Timestamp::new(11),
+                Timestamp::new(20),
                 "bleh",
             )
             .await
@@ -1369,8 +1367,8 @@ pub(crate) mod test_helpers {
                 table.id,
                 sequencer.id,
                 SequenceNumber::new(3),
-                min_time.add(10),
-                max_time.add(10),
+                Timestamp::new(21),
+                Timestamp::new(30),
                 "sdf",
             )
             .await
@@ -1410,8 +1408,8 @@ pub(crate) mod test_helpers {
                 table2.id,
                 sequencer.id,
                 SequenceNumber::new(1),
-                min_time.add(10),
-                max_time.add(10),
+                Timestamp::new(31),
+                Timestamp::new(40),
                 "whatevs",
             )
             .await
@@ -1422,8 +1420,8 @@ pub(crate) mod test_helpers {
                 table2.id,
                 sequencer.id,
                 SequenceNumber::new(2),
-                min_time.add(10),
-                max_time.add(10),
+                Timestamp::new(41),
+                Timestamp::new(50),
                 "foo",
             )
             .await
@@ -1455,6 +1453,20 @@ pub(crate) mod test_helpers {
             .unwrap();
         assert!(ts.is_none());
 
+        // test list_by_sequencer
+        let listed = repos
+            .tombstones()
+            .list_by_sequencer(sequencer.id)
+            .await
+            .unwrap();
+        //Should inlcude all 5 tombstones from 2 different tables
+        assert_eq!(listed.len(), 5);
+        assert!(listed.contains(&t1));
+        assert!(listed.contains(&t2));
+        assert!(listed.contains(&t3));
+        assert!(listed.contains(&t4));
+        assert!(listed.contains(&t5));
+
         // test remove
         repos.tombstones().remove(&[t1.id, t3.id]).await.unwrap();
         let ts = repos.tombstones().get_by_id(t1.id).await.unwrap();
@@ -1467,6 +1479,22 @@ pub(crate) mod test_helpers {
         assert_eq!(ts, t4.clone()); // still there
         let ts = repos.tombstones().get_by_id(t5.id).await.unwrap().unwrap();
         assert_eq!(ts, t5.clone()); // still there
+                                    // list all of them again
+        let listed = repos
+            .tombstones()
+            .list_by_sequencer(sequencer.id)
+            .await
+            .unwrap();
+        // should have only 3 now
+        assert_eq!(listed.len(), 3);
+        assert!(listed.contains(&t2));
+        assert!(listed.contains(&t4));
+        assert!(listed.contains(&t5));
+
+        // test list parquet files by overlaped tombstones
+        let listed = repos.parquet_files().list_by_tombstone(t2).await.unwrap();
+        // should not have any
+        assert!(listed.is_empty());
     }
 
     async fn test_tombstones_by_parquet_file(catalog: Arc<dyn Catalog>) {
@@ -1509,8 +1537,6 @@ pub(crate) mod test_helpers {
             .await
             .unwrap();
 
-        let min_time = Timestamp::new(10);
-        let max_time = Timestamp::new(20);
         let max_sequence_number = SequenceNumber::new(140);
 
         let parquet_file_params = ParquetFileParams {
@@ -1521,8 +1547,8 @@ pub(crate) mod test_helpers {
             object_store_id: Uuid::new_v4(),
             min_sequence_number: SequenceNumber::new(10),
             max_sequence_number,
-            min_time,
-            max_time,
+            min_time: Timestamp::new(10),
+            max_time: Timestamp::new(20),
             file_size_bytes: 1337,
             parquet_metadata: b"md1".to_vec(),
             row_count: 0,
@@ -1536,88 +1562,106 @@ pub(crate) mod test_helpers {
             .unwrap();
 
         // Create a tombstone with another sequencer
-        repos
+        let t1 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 other_sequencer.id,
                 max_sequence_number + 100,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file won't be listed because it belongs to different sequencer the tombstone created on
+        let pfs = repos.parquet_files().list_by_tombstone(t1).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone with the same sequencer but a different table
-        repos
+        let t2 = repos
             .tombstones()
             .create_or_get(
                 other_table.id,
                 sequencer.id,
                 max_sequence_number + 101,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file won't be listed because it belongs to different table the tombstone created on
+        let pfs = repos.parquet_files().list_by_tombstone(t2).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone with a sequence number before the parquet file's max
-        repos
+        let t3 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 sequencer.id,
                 max_sequence_number - 10,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file won't be listed because its range covers the tombstone's sequence number
+        let pfs = repos.parquet_files().list_by_tombstone(t3).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone with a sequence number exactly equal to the parquet file's max
-        repos
+        let t4 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 sequencer.id,
                 max_sequence_number,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file won't be listed because its range covers the tombstone's sequence number
+        let pfs = repos.parquet_files().list_by_tombstone(t4).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone with a time range less than the parquet file's times
-        repos
+        let t5 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 sequencer.id,
                 max_sequence_number + 102,
-                min_time - 5,
-                min_time - 4,
+                Timestamp::new(5),
+                Timestamp::new(6),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file on't be listed because its becase it does not overlap
+        let pfs = repos.parquet_files().list_by_tombstone(t5).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone with a time range greater than the parquet file's times
-        repos
+        let t6 = repos
             .tombstones()
             .create_or_get(
                 table.id,
                 sequencer.id,
                 max_sequence_number + 103,
-                max_time + 1,
-                max_time + 2,
+                Timestamp::new(21),
+                Timestamp::new(22),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file on't be listed because its becase it does not overlap
+        let pfs = repos.parquet_files().list_by_tombstone(t6).await.unwrap();
+        assert!(pfs.is_empty());
 
         // Create a tombstone that matches all criteria
         let matching_tombstone1 = repos
@@ -1626,12 +1670,20 @@ pub(crate) mod test_helpers {
                 table.id,
                 sequencer.id,
                 max_sequence_number + 104,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file should be listed
+        let pfs = repos
+            .parquet_files()
+            .list_by_tombstone(matching_tombstone1.clone())
+            .await
+            .unwrap();
+        assert_eq!(pfs.len(), 1);
+        assert!(pfs.contains(&parquet_file));
 
         // Create a tombstone that overlaps the file's min
         let matching_tombstone2 = repos
@@ -1640,12 +1692,20 @@ pub(crate) mod test_helpers {
                 table.id,
                 sequencer.id,
                 max_sequence_number + 105,
-                min_time - 1,
-                min_time + 1,
+                Timestamp::new(9),
+                Timestamp::new(11),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file should be listed
+        let pfs = repos
+            .parquet_files()
+            .list_by_tombstone(matching_tombstone2.clone())
+            .await
+            .unwrap();
+        assert_eq!(pfs.len(), 1);
+        assert!(pfs.contains(&parquet_file));
 
         // Create a tombstone that overlaps the file's max
         let matching_tombstone3 = repos
@@ -1654,12 +1714,20 @@ pub(crate) mod test_helpers {
                 table.id,
                 sequencer.id,
                 max_sequence_number + 106,
-                max_time - 1,
-                max_time + 1,
+                Timestamp::new(19),
+                Timestamp::new(21),
                 "whatevs",
             )
             .await
             .unwrap();
+        // The parquet file should be listed
+        let pfs = repos
+            .parquet_files()
+            .list_by_tombstone(matching_tombstone3.clone())
+            .await
+            .unwrap();
+        assert_eq!(pfs.len(), 1);
+        assert!(pfs.contains(&parquet_file));
 
         let tombstones = repos
             .tombstones()
@@ -1667,8 +1735,8 @@ pub(crate) mod test_helpers {
                 sequencer.id,
                 table.id,
                 max_sequence_number,
-                min_time,
-                max_time,
+                Timestamp::new(10),
+                Timestamp::new(20),
             )
             .await
             .unwrap();

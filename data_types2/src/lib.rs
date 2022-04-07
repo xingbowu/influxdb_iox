@@ -745,60 +745,60 @@ pub trait FileMeta: Debug + Sync + Send + 'static {
     fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone;
 }
 
-impl<T> FileMeta for Arc<T>
-where
-    T: FileMeta,
-{
-    /// Parquet file id
-    fn parquet_file_id(&self) -> ParquetFileId {
-        self.as_ref().parquet_file_id()
-    }
+// impl<T> FileMeta for Arc<T>
+// where
+//     T: FileMeta,
+// {
+//     /// Parquet file id
+//     fn parquet_file_id(&self) -> ParquetFileId {
+//         self.as_ref().parquet_file_id()
+//     }
 
-    /// Sequence id
-    fn sequencer_id(&self) -> SequencerId {
-        self.as_ref().sequencer_id()
-    }
+//     /// Sequence id
+//     fn sequencer_id(&self) -> SequencerId {
+//         self.as_ref().sequencer_id()
+//     }
 
-    /// Table id
-    fn table_id(&self) -> TableId {
-        self.as_ref().table_id()
-    }
+//     /// Table id
+//     fn table_id(&self) -> TableId {
+//         self.as_ref().table_id()
+//     }
 
-    /// Return min time of the file data
-    fn min_time(&self) -> Timestamp {
-        self.as_ref().min_time()
-    }
+//     /// Return min time of the file data
+//     fn min_time(&self) -> Timestamp {
+//         self.as_ref().min_time()
+//     }
 
-    /// Return max time of the file data
-    fn max_time(&self) -> Timestamp {
-        self.as_ref().max_time()
-    }
+//     /// Return max time of the file data
+//     fn max_time(&self) -> Timestamp {
+//         self.as_ref().max_time()
+//     }
 
-    /// Return the size of the file data
-    fn file_size_bytes(&self) -> i64 {
-        self.as_ref().file_size_bytes()
-    }
+//     /// Return the size of the file data
+//     fn file_size_bytes(&self) -> i64 {
+//         self.as_ref().file_size_bytes()
+//     }
 
-    /// Return max sequnce number
-    fn max_sequence_number(&self) -> SequenceNumber {
-        self.as_ref().max_sequence_number()
-    }
+//     /// Return max sequnce number
+//     fn max_sequence_number(&self) -> SequenceNumber {
+//         self.as_ref().max_sequence_number()
+//     }
 
-    /// Return parquet file
-    fn parquet_file(&self) -> ParquetFile {
-        self.as_ref().parquet_file()
-    }
+//     /// Return parquet file
+//     fn parquet_file(&self) -> ParquetFile {
+//         self.as_ref().parquet_file()
+//     }
 
-    /// Return true if there are already tombstones
-    fn tombstones_attached(&self) -> bool {
-        self.as_ref().tombstones_attached()
-    }
+//     /// Return true if there are already tombstones
+//     fn tombstones_attached(&self) -> bool {
+//         self.as_ref().tombstones_attached()
+//     }
 
-    /// Return the parquet file with tombstones
-    fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone {
-        self.as_ref().parquet_files_with_timbstone()
-    }
-}
+//     /// Return the parquet file with tombstones
+//     fn parquet_files_with_timbstone(&self) -> ParquetFileWithTombstone {
+//         self.as_ref().parquet_files_with_timbstone()
+//     }
+// }
 
 /// Data for a parquet file reference that has been inserted in the catalog.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
