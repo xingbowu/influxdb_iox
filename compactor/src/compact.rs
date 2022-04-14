@@ -1710,6 +1710,91 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_compact_two_big_files() {
+        let catalog = TestCatalog::new();
+
+        let lp1 = (1..1000)
+            .into_iter()
+            .map(|i| format!("table,tag1=foo ifield=1i {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let lp2 = (500..1500)
+            .into_iter()
+            .map(|i| format!("table,tag1=foo ifield=1i {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let ns = catalog.create_namespace("ns").await;
+        let sequencer = ns.create_sequencer(1).await;
+        let table = ns.create_table("table").await;
+        let partition = table
+            .with_sequencer(&sequencer)
+            .create_partition("part")
+            .await;
+        let parquet_file1 = partition
+            .create_parquet_file_with_min_max(&lp1, 1, 5, 1, 1000)
+            .await
+            .parquet_file;
+        let parquet_file2 = partition
+            .create_parquet_file_with_min_max(&lp2, 10, 15, 500, 1500)
+            .await
+            .parquet_file;
+
+        let compactor = Compactor::new(
+            vec![sequencer.sequencer.id],
+            Arc::clone(&catalog.catalog),
+            Arc::clone(&catalog.object_store),
+            Arc::new(Executor::new(1)),
+            Arc::new(SystemProvider::new()),
+            BackoffConfig::default(),
+            CompactorConfig::new(90, 100000, 100000),
+            Arc::new(metric::Registry::new()),
+        );
+
+        let pf1 = ParquetFileWithTombstone {
+            data: Arc::new(parquet_file1),
+            tombstones: vec![],
+        };
+        // File 2 without tombstones
+        let pf2 = ParquetFileWithTombstone {
+            data: Arc::new(parquet_file2),
+            tombstones: vec![],
+        };
+
+        // Compact them
+        let batches = compactor.compact(vec![pf1, pf2]).await.unwrap();
+        // 2 sets based on the split rule
+        assert_eq!(batches.len(), 2);
+
+        // Data: Should have 4 rows left
+        // first set contains least recent 3 rows
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+-----------------------------+",
+                "| field_int | tag1 | time                        |",
+                "+-----------+------+-----------------------------+",
+                "| 10        | VT   | 1970-01-01T00:00:00.000006Z |",
+                "| 1500      | WA   | 1970-01-01T00:00:00.000008Z |",
+                "| 70        | UT   | 1970-01-01T00:00:00.000020Z |",
+                "+-----------+------+-----------------------------+",
+            ],
+            &batches[0].data[0..2]
+        );
+        // second set contains most recent one row
+        assert_batches_sorted_eq!(
+            &[
+                "+-----------+------+-----------------------------+",
+                "| field_int | tag1 | time                        |",
+                "+-----------+------+-----------------------------+",
+                "| 270       | UT   | 1970-01-01T00:00:00.000025Z |",
+                "+-----------+------+-----------------------------+",
+            ],
+            &batches[1].data[0..3]
+        );
+    }
+
     /// A test utility function to make minimially-viable ParquetFile records with particular
     /// min/max times. Does not involve the catalog at all.
     fn arbitrary_parquet_file(min_time: i64, max_time: i64) -> ParquetFileWithMetadata {
