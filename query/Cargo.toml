@@ -39,6 +39,8 @@ trace = { path = "../trace" }
 predicate = { path = "../predicate" }
 workspace-hack = { path = "../workspace-hack"}
 
+datafusion-scheduler = { git = "https://github.com/alamb/arrow-datafusion.git", branch="alamb/scheduler_record_batch" }
+
 [dev-dependencies] # In alphabetical order
 itertools = "0.10.1"
 test_helpers = { path = "../test_helpers" }
