@@ -2,6 +2,7 @@
 //! DataFusion
 
 use async_trait::async_trait;
+use datafusion_scheduler::Scheduler;
 use executor::DedicatedExecutor;
 use std::{convert::TryInto, fmt, sync::Arc};
 
@@ -325,20 +326,19 @@ impl IOxSessionContext {
         &self,
         physical_plan: Arc<dyn ExecutionPlan>,
     ) -> Result<SendableRecordBatchStream> {
-        match physical_plan.output_partitioning().partition_count() {
-            0 => Ok(Box::pin(EmptyRecordBatchStream::new(
-                physical_plan.schema(),
-            ))),
-            1 => self.execute_stream_partitioned(physical_plan, 0).await,
-            _ => {
-                // Merge into a single partition
-                self.execute_stream_partitioned(
-                    Arc::new(CoalescePartitionsExec::new(physical_plan)),
-                    0,
-                )
-                .await
+        // create a stream that has a single physical plan to run
+        let plan_to_run = match physical_plan.output_partitioning().partition_count() {
+            0 => {
+                return Ok(Box::pin(EmptyRecordBatchStream::new(
+                    physical_plan.schema(),
+                )))
             }
-        }
+            1 => physical_plan,
+            _ => Arc::new(CoalescePartitionsExec::new(physical_plan)),
+        };
+
+        assert_eq!(plan_to_run.output_partitioning().partition_count(), 1);
+        self.execute_stream_partitioned(plan_to_run, 0).await
     }
 
     /// Executes a single partition of a physical plan and produces a
@@ -358,8 +358,14 @@ impl IOxSessionContext {
         let task_context = Arc::new(TaskContext::from(self.inner()));
 
         self.run(async move {
-            let stream = physical_plan.execute(partition, task_context).await?;
-            let stream = TracedStream::new(stream, span, physical_plan);
+            // TODO reuse the schedulers (so we don't make new schedulers)
+            let scheduler = Scheduler::new(4);
+
+            // TODO no way to run a singe partition with the new scheduler yet
+
+            //let stream = physical_plan.execute(partition, task_context).await?;
+            let stream = scheduler.schedule(Arc::clone(&physical_plan), task_context)?;
+            let stream = TracedStream::new(Box::pin(stream), span, physical_plan);
             Ok(Box::pin(stream) as _)
         })
         .await
