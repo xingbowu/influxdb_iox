@@ -14,7 +14,6 @@ publish = false
 ### BEGIN HAKARI SECTION
 [dependencies]
 ahash = { version = "0.7", features = ["std"] }
-arrow = { version = "12", features = ["comfy-table", "csv", "csv_crate", "flatbuffers", "ipc", "prettyprint", "rand", "test_utils"] }
 base64 = { version = "0.13", features = ["alloc", "std"] }
 bitflags = { version = "1" }
 byteorder = { version = "1", features = ["std"] }
@@ -22,6 +21,7 @@ bytes = { version = "1", features = ["std"] }
 chrono = { version = "0.4", features = ["alloc", "clock", "libc", "oldtime", "serde", "std", "time", "winapi"] }
 crossbeam-utils = { version = "0.8", features = ["lazy_static", "std"] }
 crypto-common = { version = "0.1", default-features = false, features = ["std"] }
+datafusion = { git = "https://github.com/alamb/arrow-datafusion.git", branch = "alamb/scheduler_record_batch", features = ["crypto_expressions", "regex_expressions", "unicode_expressions"] }
 digest = { version = "0.10", features = ["alloc", "block-buffer", "core-api", "mac", "std", "subtle"] }
 either = { version = "1", features = ["use_std"] }
 futures-channel = { version = "0.3", features = ["alloc", "futures-sink", "sink", "std"] }

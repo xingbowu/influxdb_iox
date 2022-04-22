@@ -7059,7 +7059,6 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "ahash",
- "arrow",
  "base64 0.13.0",
  "bitflags",
  "byteorder",
@@ -7068,6 +7067,7 @@ dependencies = [
  "chrono",
  "crossbeam-utils",
  "crypto-common",
+ "datafusion 7.0.0",
  "digest 0.10.3",
  "either",
  "futures-channel",
