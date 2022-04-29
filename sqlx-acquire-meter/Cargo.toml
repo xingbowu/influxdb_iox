@@ -1,0 +1,24 @@
+[package]
+name = "sqlx-acquire-meter"
+authors = ["Marko Mikulicic <mkm@influxdata.com>"]
+version = "0.1.0"
+edition = "2021"
+description = "Measure the duration of acquisition of connections out of a sqlx pool."
+
+# Prevent this from being published to crates.io!
+publish = false
+
+[dependencies]
+sqlx = { version = "0.5.13", features = ["runtime-tokio-rustls", "postgres", "json", "tls"] }
+either = "1.6.1"
+tokio = { version = "1.18", features = ["rt-multi-thread", "macros", "parking_lot"] }
+tokio-stream = { version = "0.1", default_features = false }
+futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink"] }
+async-stream = { version = "0.3" }
+iox_time = { version = "0.1.0", path = "../iox_time" }
+workspace-hack = { path = "../workspace-hack"}
+
+[dev-dependencies]
+dotenv = "0.15.0"
+rand = { version = "0.8", features = ["small_rng"] }
