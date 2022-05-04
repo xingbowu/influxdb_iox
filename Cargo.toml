@@ -48,7 +48,6 @@ members = [
     "object_store",
     "observability_deps",
     "panic_logging",
-    "parquet_catalog",
     "parquet_file",
     "persistence_windows",
     "predicate",
