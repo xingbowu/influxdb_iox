@@ -56,7 +56,6 @@ members = [
     "query_tests",
     "router2",
     "schema",
-    "server",
     "service_common",
     "service_grpc_influxrpc",
     "service_grpc_flight",

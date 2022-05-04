@@ -43,7 +43,6 @@ querier = { path = "../querier" }
 query = { path = "../query" }
 router2 = { path = "../router2" }
 schema = { path = "../schema" }
-server = { path = "../server" }
 iox_time = { path = "../iox_time" }
 trace = { path = "../trace" }
 trace_exporters = { path = "../trace_exporters" }
