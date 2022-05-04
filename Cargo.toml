@@ -47,7 +47,6 @@ members = [
     "mutable_batch_tests",
     "object_store",
     "observability_deps",
-    "packers",
     "panic_logging",
     "parquet_catalog",
     "parquet_file",
