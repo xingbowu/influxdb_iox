@@ -318,6 +318,7 @@ pub trait TableRepo: Send + Sync {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, sqlx::FromRow)]
 pub struct TablePersistInfo {
     /// sequencer the sequence numbers are associated with
+    #[sqlx(rename = "shard_id")]
     pub sequencer_id: SequencerId,
     /// the global identifier for the table
     pub table_id: TableId,

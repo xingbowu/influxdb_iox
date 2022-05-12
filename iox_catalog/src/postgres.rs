@@ -834,13 +834,13 @@ WHERE namespace_id = $1;
         let rec = sqlx::query_as::<_, TablePersistInfo>(
             r#"
 WITH tid as (SELECT id FROM table_name WHERE name = $2 AND namespace_id = $3)
-SELECT $1 as sequencer_id, id as table_id,
+SELECT $1 as shard_id, id as table_id,
        tombstone.sequence_number as tombstone_max_sequence_number
 FROM tid
 LEFT JOIN (
   SELECT tombstone.table_id, sequence_number
   FROM tombstone
-  WHERE sequencer_id = $1 AND tombstone.table_id = (SELECT id FROM tid)
+  WHERE shard_id = $1 AND tombstone.table_id = (SELECT id FROM tid)
   ORDER BY sequence_number DESC
   LIMIT 1
 ) tombstone ON tombstone.table_id = tid.id
@@ -1004,12 +1004,12 @@ impl SequencerRepo for PostgresTxn {
     ) -> Result<Sequencer> {
         sqlx::query_as::<_, Sequencer>(
             r#"
-INSERT INTO sequencer
+INSERT INTO shard
     ( kafka_topic_id, kafka_partition, min_unpersisted_sequence_number )
 VALUES
     ( $1, $2, 0 )
-ON CONFLICT ON CONSTRAINT sequencer_unique
-DO UPDATE SET kafka_topic_id = sequencer.kafka_topic_id
+ON CONFLICT ON CONSTRAINT shard_unique
+DO UPDATE SET kafka_topic_id = shard.kafka_topic_id
 RETURNING *;;
         "#,
         )
@@ -1034,7 +1034,7 @@ RETURNING *;;
         let rec = sqlx::query_as::<_, Sequencer>(
             r#"
 SELECT *
-FROM sequencer
+FROM shard
 WHERE kafka_topic_id = $1
   AND kafka_partition = $2;
         "#,
@@ -1054,14 +1054,14 @@ WHERE kafka_topic_id = $1
     }
 
     async fn list(&mut self) -> Result<Vec<Sequencer>> {
-        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM sequencer;"#)
+        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM shard;"#)
             .fetch_all(&mut self.inner)
             .await
             .map_err(|e| Error::SqlxError { source: e })
     }
 
     async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Sequencer>> {
-        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM sequencer WHERE kafka_topic_id = $1;"#)
+        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM shard WHERE kafka_topic_id = $1;"#)
             .bind(&topic.id) // $1
             .fetch_all(&mut self.inner)
             .await
@@ -1073,14 +1073,13 @@ WHERE kafka_topic_id = $1
         sequencer_id: SequencerId,
         sequence_number: SequenceNumber,
     ) -> Result<()> {
-        let _ = sqlx::query(
-            r#"UPDATE sequencer SET min_unpersisted_sequence_number = $1 WHERE id = $2;"#,
-        )
-        .bind(&sequence_number.get()) // $1
-        .bind(&sequencer_id) // $2
-        .execute(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        let _ =
+            sqlx::query(r#"UPDATE shard SET min_unpersisted_sequence_number = $1 WHERE id = $2;"#)
+                .bind(&sequence_number.get()) // $1
+                .bind(&sequencer_id) // $2
+                .execute(&mut self.inner)
+                .await
+                .map_err(|e| Error::SqlxError { source: e })?;
 
         Ok(())
     }
@@ -1097,7 +1096,7 @@ impl PartitionRepo for PostgresTxn {
         let v = sqlx::query_as::<_, Partition>(
             r#"
 INSERT INTO partition
-    ( partition_key, sequencer_id, table_id )
+    ( partition_key, shard_id, table_id )
 VALUES
     ( $1, $2, $3 )
 ON CONFLICT ON CONSTRAINT partition_key_unique
@@ -1146,7 +1145,7 @@ RETURNING *;
     }
 
     async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Partition>> {
-        sqlx::query_as::<_, Partition>(r#"SELECT * FROM partition WHERE sequencer_id = $1;"#)
+        sqlx::query_as::<_, Partition>(r#"SELECT * FROM partition WHERE shard_id = $1;"#)
             .bind(&sequencer_id) // $1
             .fetch_all(&mut self.inner)
             .await
@@ -1204,7 +1203,7 @@ WHERE partition.id = $1;
         let table_name = info.get("table_name");
         let partition = Partition {
             id: info.get("id"),
-            sequencer_id: info.get("sequencer_id"),
+            sequencer_id: info.get("shard_id"),
             table_id: info.get("table_id"),
             partition_key: info.get("partition_key"),
             sort_key: info.get("sort_key"),
@@ -1258,7 +1257,7 @@ impl TombstoneRepo for PostgresTxn {
         let v = sqlx::query_as::<_, Tombstone>(
             r#"
 INSERT INTO tombstone
-    ( table_id, sequencer_id, sequence_number, min_time, max_time, serialized_predicate )
+    ( table_id, shard_id, sequence_number, min_time, max_time, serialized_predicate )
 VALUES
     ( $1, $2, $3, $4, $5, $6 )
 ON CONFLICT ON CONSTRAINT tombstone_unique
@@ -1282,7 +1281,7 @@ RETURNING *;
             }
         })?;
 
-        // If tombstone_unique is hit, a record with (table_id, sequencer_id,
+        // If tombstone_unique is hit, a record with (table_id, shard_id,
         // sequence_number) already exists.
         //
         // Ensure the caller does not falsely believe they have created the
@@ -1310,7 +1309,7 @@ RETURNING *;
 SELECT
     tombstone.id as id,
     tombstone.table_id as table_id,
-    tombstone.sequencer_id as sequencer_id,
+    tombstone.shard_id as shard_id,
     tombstone.sequence_number as sequence_number,
     tombstone.min_time as min_time,
     tombstone.max_time as max_time,
@@ -1371,7 +1370,7 @@ WHERE id = $1;
             r#"
 SELECT *
 FROM tombstone
-WHERE sequencer_id = $1
+WHERE shard_id = $1
   AND sequence_number > $2
 ORDER BY id;
             "#,
@@ -1427,7 +1426,7 @@ WHERE id = ANY($1);
             r#"
 SELECT *
 FROM tombstone
-WHERE sequencer_id = $1
+WHERE shard_id = $1
   AND table_id = $2
   AND sequence_number > $3
   AND ((min_time <= $4 AND max_time >= $4)
@@ -1469,7 +1468,7 @@ impl ParquetFileRepo for PostgresTxn {
         let rec = sqlx::query_as::<_, ParquetFile>(
             r#"
 INSERT INTO parquet_file (
-    sequencer_id, table_id, partition_id, object_store_id, min_sequence_number,
+    shard_id, table_id, partition_id, object_store_id, min_sequence_number,
     max_sequence_number, min_time, max_time, file_size_bytes, parquet_metadata,
     row_count, compaction_level, created_at, namespace_id )
 VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14 )
@@ -1527,11 +1526,11 @@ RETURNING *;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE sequencer_id = $1
+WHERE shard_id = $1
   AND max_sequence_number > $2
 ORDER BY id;
             "#,
@@ -1551,7 +1550,7 @@ ORDER BY id;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT parquet_file.id, parquet_file.sequencer_id, parquet_file.namespace_id,
+SELECT parquet_file.id, parquet_file.shard_id, parquet_file.namespace_id,
        parquet_file.table_id, parquet_file.partition_id, parquet_file.object_store_id,
        parquet_file.min_sequence_number, parquet_file.max_sequence_number, parquet_file.min_time,
        parquet_file.max_time, parquet_file.to_delete, parquet_file.file_size_bytes,
@@ -1573,7 +1572,7 @@ WHERE table_name.namespace_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -1625,11 +1624,11 @@ RETURNING *;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE parquet_file.sequencer_id = $1
+WHERE parquet_file.shard_id = $1
   AND parquet_file.compaction_level = 0
   AND parquet_file.to_delete IS NULL
   LIMIT 1000;
@@ -1651,11 +1650,11 @@ WHERE parquet_file.sequencer_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE parquet_file.sequencer_id = $1
+WHERE parquet_file.shard_id = $1
   AND parquet_file.table_id = $2
   AND parquet_file.partition_id = $3
   AND parquet_file.compaction_level = 1
@@ -1682,7 +1681,7 @@ WHERE parquet_file.sequencer_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -1784,7 +1783,7 @@ RETURNING id;
 SELECT count(*) as count
 FROM parquet_file
 WHERE table_id = $1
-  AND sequencer_id = $2
+  AND shard_id = $2
   AND min_sequence_number < $3
   AND parquet_file.to_delete IS NULL
   AND ((parquet_file.min_time <= $4 AND parquet_file.max_time >= $4)
@@ -1811,7 +1810,7 @@ WHERE table_id = $1
         // `parquet_metadata` column!!
         let rec = sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, shard_id, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -2215,7 +2214,7 @@ mod tests {
             .await
             .expect("should create OK");
 
-        // Call create_or_get for the same (table_id, sequencer_id,
+        // Call create_or_get for the same (table_id, shard_id,
         // sequence_number) triplet with different metadata.
         //
         // The caller should not falsely believe it has persisted the incorrect
@@ -2282,7 +2281,7 @@ mod tests {
             .await
             .expect("should create OK");
 
-        // Call create_or_get for the same (key, table_id, sequencer_id)
+        // Call create_or_get for the same (key, table_id, shard_id)
         // triplet, setting the same sequencer ID to ensure the write is
         // idempotent.
         let b = postgres

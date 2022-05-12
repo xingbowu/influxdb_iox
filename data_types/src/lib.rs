@@ -644,6 +644,7 @@ pub struct Partition {
     /// the id of the partition
     pub id: PartitionId,
     /// the sequencer the data in the partition arrived from
+    #[sqlx(rename = "shard_id")]
     pub sequencer_id: SequencerId,
     /// the table the partition is under
     pub table_id: TableId,
@@ -680,6 +681,7 @@ pub struct Tombstone {
     /// the table the tombstone is associated with
     pub table_id: TableId,
     /// the sequencer the tombstone was sent through
+    #[sqlx(rename = "shard_id")]
     pub sequencer_id: SequencerId,
     /// the sequence nubmer assigned to the tombstone from the sequencer
     pub sequence_number: SequenceNumber,
@@ -697,6 +699,7 @@ pub struct ParquetFile {
     /// the id of the file in the catalog
     pub id: ParquetFileId,
     /// the sequencer that sequenced writes that went into this file
+    #[sqlx(rename = "shard_id")]
     pub sequencer_id: SequencerId,
     /// the namespace
     pub namespace_id: NamespaceId,
@@ -733,6 +736,7 @@ pub struct ParquetFileWithMetadata {
     /// the id of the file in the catalog
     pub id: ParquetFileId,
     /// the sequencer that sequenced writes that went into this file
+    #[sqlx(rename = "shard_id")]
     pub sequencer_id: SequencerId,
     /// the namespace
     pub namespace_id: NamespaceId,
