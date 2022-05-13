@@ -127,10 +127,10 @@ impl ColumnId {
 /// <https://github.com/influxdata/influxdb_iox/issues/4237>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct SequencerId(i64);
+pub struct ShardId(i64);
 
 #[allow(missing_docs)]
-impl SequencerId {
+impl ShardId {
     pub fn new(v: i64) -> Self {
         Self(v)
     }
@@ -139,7 +139,7 @@ impl SequencerId {
     }
 }
 
-impl std::fmt::Display for SequencerId {
+impl std::fmt::Display for ShardId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -187,12 +187,12 @@ impl std::fmt::Display for PartitionId {
     }
 }
 
-/// Combination of Sequencer ID, Table ID, and Partition ID useful for identifying groups of
+/// Combination of Shard ID, Table ID, and Partition ID useful for identifying groups of
 /// Parquet files to be compacted together.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct TablePartition {
-    /// The sequencer ID
-    pub sequencer_id: SequencerId,
+    /// The shard ID
+    pub shard_id: ShardId,
     /// The table ID
     pub table_id: TableId,
     /// The partition ID
@@ -201,9 +201,9 @@ pub struct TablePartition {
 
 impl TablePartition {
     /// Combine the relevant parts
-    pub fn new(sequencer_id: SequencerId, table_id: TableId, partition_id: PartitionId) -> Self {
+    pub fn new(shard_id: ShardId, table_id: TableId, partition_id: PartitionId) -> Self {
         Self {
-            sequencer_id,
+            shard_id,
             table_id,
             partition_id,
         }
@@ -625,7 +625,7 @@ pub fn column_type_from_field(field_value: &FieldValue) -> ColumnType {
 #[derive(Debug, Copy, Clone, PartialEq, sqlx::FromRow)]
 pub struct Sequencer {
     /// the id of the sequencer
-    pub id: SequencerId,
+    pub id: ShardId,
     /// the topic the sequencer is reading from
     pub kafka_topic_id: KafkaTopicId,
     /// the kafka partition the sequencer is reading from
@@ -643,9 +643,8 @@ pub struct Sequencer {
 pub struct Partition {
     /// the id of the partition
     pub id: PartitionId,
-    /// the sequencer the data in the partition arrived from
-    #[sqlx(rename = "shard_id")]
-    pub sequencer_id: SequencerId,
+    /// the shard the data in the partition arrived from
+    pub shard_id: ShardId,
     /// the table the partition is under
     pub table_id: TableId,
     /// the string key of the partition
@@ -680,9 +679,8 @@ pub struct Tombstone {
     pub id: TombstoneId,
     /// the table the tombstone is associated with
     pub table_id: TableId,
-    /// the sequencer the tombstone was sent through
-    #[sqlx(rename = "shard_id")]
-    pub sequencer_id: SequencerId,
+    /// the shard the tombstone was sent through
+    pub shard_id: ShardId,
     /// the sequence nubmer assigned to the tombstone from the sequencer
     pub sequence_number: SequenceNumber,
     /// the min time (inclusive) that the delete applies to
@@ -698,9 +696,8 @@ pub struct Tombstone {
 pub struct ParquetFile {
     /// the id of the file in the catalog
     pub id: ParquetFileId,
-    /// the sequencer that sequenced writes that went into this file
-    #[sqlx(rename = "shard_id")]
-    pub sequencer_id: SequencerId,
+    /// the shard that sequenced writes that went into this file
+    pub shard_id: ShardId,
     /// the namespace
     pub namespace_id: NamespaceId,
     /// the table
@@ -735,9 +732,8 @@ pub struct ParquetFile {
 pub struct ParquetFileWithMetadata {
     /// the id of the file in the catalog
     pub id: ParquetFileId,
-    /// the sequencer that sequenced writes that went into this file
-    #[sqlx(rename = "shard_id")]
-    pub sequencer_id: SequencerId,
+    /// the shard that sequenced writes that went into this file
+    pub shard_id: ShardId,
     /// the namespace
     pub namespace_id: NamespaceId,
     /// the table
@@ -774,7 +770,7 @@ impl ParquetFileWithMetadata {
     pub fn new(parquet_file: ParquetFile, parquet_metadata: Vec<u8>) -> Self {
         let ParquetFile {
             id,
-            sequencer_id,
+            shard_id,
             namespace_id,
             table_id,
             partition_id,
@@ -792,7 +788,7 @@ impl ParquetFileWithMetadata {
 
         Self {
             id,
-            sequencer_id,
+            shard_id,
             namespace_id,
             table_id,
             partition_id,
@@ -815,7 +811,7 @@ impl ParquetFileWithMetadata {
     pub fn split_off_metadata(self) -> (ParquetFile, Vec<u8>) {
         let Self {
             id,
-            sequencer_id,
+            shard_id,
             namespace_id,
             table_id,
             partition_id,
@@ -835,7 +831,7 @@ impl ParquetFileWithMetadata {
         (
             ParquetFile {
                 id,
-                sequencer_id,
+                shard_id,
                 namespace_id,
                 table_id,
                 partition_id,
@@ -858,8 +854,8 @@ impl ParquetFileWithMetadata {
 /// Data for a parquet file to be inserted into the catalog.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParquetFileParams {
-    /// the sequencer that sequenced writes that went into this file
-    pub sequencer_id: SequencerId,
+    /// the shard that sequenced writes that went into this file
+    pub shard_id: ShardId,
     /// the namespace
     pub namespace_id: NamespaceId,
     /// the table

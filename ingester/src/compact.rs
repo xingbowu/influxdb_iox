@@ -118,7 +118,7 @@ pub async fn compact_persisting_batch(
     let meta = IoxMetadata {
         object_store_id: batch.object_store_id,
         creation_timestamp: time_provider.now(),
-        sequencer_id: batch.sequencer_id,
+        shard_id: batch.shard_id,
         namespace_id: NamespaceId::new(namespace_id),
         namespace_name: Arc::from(namespace_name.as_str()),
         table_id: batch.table_id,
@@ -178,7 +178,7 @@ mod tests {
         make_persisting_batch, make_queryable_batch, make_queryable_batch_with_deletes,
     };
     use arrow_util::assert_batches_eq;
-    use data_types::{Partition, PartitionId, SequencerId, TableId};
+    use data_types::{Partition, PartitionId, ShardId, TableId};
     use iox_time::SystemProvider;
     use mutable_batch_lp::lines_to_batches;
     use schema::selection::Selection;
@@ -202,12 +202,12 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -231,7 +231,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 sort_key: None,
@@ -266,14 +266,14 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let seq_num_end: i64 = seq_num_start; // one batch
         let namespace_id = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -297,7 +297,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 sort_key: None,
@@ -326,7 +326,7 @@ mod tests {
         let expected_meta = make_meta(
             uuid,
             meta.creation_timestamp,
-            seq_id,
+            shard_id,
             namespace_id,
             namespace_name,
             table_id,
@@ -359,14 +359,14 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let seq_num_end: i64 = seq_num_start; // one batch
         let namespace_id = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -390,7 +390,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 // NO SORT KEY from the catalog here, first persisting batch
@@ -421,7 +421,7 @@ mod tests {
         let expected_meta = make_meta(
             uuid,
             meta.creation_timestamp,
-            seq_id,
+            shard_id,
             namespace_id,
             namespace_name,
             table_id,
@@ -455,14 +455,14 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let seq_num_end: i64 = seq_num_start; // one batch
         let namespace_id = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -486,7 +486,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 // SPECIFY A SORT KEY HERE to simulate a sort key being stored in the catalog
@@ -519,7 +519,7 @@ mod tests {
         let expected_meta = make_meta(
             uuid,
             meta.creation_timestamp,
-            seq_id,
+            shard_id,
             namespace_id,
             namespace_name,
             table_id,
@@ -552,14 +552,14 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let seq_num_end: i64 = seq_num_start; // one batch
         let namespace_id = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -583,7 +583,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 // SPECIFY A SORT KEY HERE to simulate a sort key being stored in the catalog
@@ -617,7 +617,7 @@ mod tests {
         let expected_meta = make_meta(
             uuid,
             meta.creation_timestamp,
-            seq_id,
+            shard_id,
             namespace_id,
             namespace_name,
             table_id,
@@ -653,14 +653,14 @@ mod tests {
         let namespace_name = "test_namespace";
         let partition_key = "test_partition_key";
         let table_name = "test_table";
-        let seq_id = 1;
+        let shard_id = 1;
         let seq_num_start: i64 = 1;
         let seq_num_end: i64 = seq_num_start; // one batch
         let namespace_id = 1;
         let table_id = 1;
         let partition_id = 1;
         let persisting_batch = make_persisting_batch(
-            seq_id,
+            shard_id,
             seq_num_start,
             table_id,
             table_name,
@@ -684,7 +684,7 @@ mod tests {
             table_name: table_name.into(),
             partition: Partition {
                 id: PartitionId::new(partition_id),
-                sequencer_id: SequencerId::new(seq_id),
+                shard_id: ShardId::new(shard_id),
                 table_id: TableId::new(table_id),
                 partition_key: partition_key.into(),
                 // SPECIFY A SORT KEY HERE to simulate a sort key being stored in the catalog
@@ -718,7 +718,7 @@ mod tests {
         let expected_meta = make_meta(
             uuid,
             meta.creation_timestamp,
-            seq_id,
+            shard_id,
             namespace_id,
             namespace_name,
             table_id,

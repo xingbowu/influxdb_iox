@@ -13,7 +13,7 @@
 
 use crate::ingester::IngesterPartition;
 use data_types::{
-    ParquetFileWithMetadata, PartitionId, SequenceNumber, SequencerId, Tombstone, TombstoneId,
+    ParquetFileWithMetadata, PartitionId, SequenceNumber, ShardId, Tombstone, TombstoneId,
 };
 use snafu::Snafu;
 use std::{
@@ -27,7 +27,7 @@ use std::{
 /// This is mostly the same as [`IngesterPartition`] but allows easier mocking.
 pub trait IngesterPartitionInfo {
     fn partition_id(&self) -> PartitionId;
-    fn sequencer_id(&self) -> SequencerId;
+    fn shard_id(&self) -> ShardId;
     fn parquet_max_sequence_number(&self) -> Option<SequenceNumber>;
     fn tombstone_max_sequence_number(&self) -> Option<SequenceNumber>;
 }
@@ -37,8 +37,8 @@ impl IngesterPartitionInfo for Arc<IngesterPartition> {
         self.deref().partition_id()
     }
 
-    fn sequencer_id(&self) -> SequencerId {
-        self.deref().sequencer_id()
+    fn shard_id(&self) -> ShardId {
+        self.deref().shard_id()
     }
 
     fn parquet_max_sequence_number(&self) -> Option<SequenceNumber> {
@@ -78,7 +78,7 @@ impl ParquetFileInfo for ParquetFileWithMetadata {
 /// This is mostly the same as [`Tombstone`] but allows easier mocking.
 pub trait TombstoneInfo {
     fn id(&self) -> TombstoneId;
-    fn sequencer_id(&self) -> SequencerId;
+    fn shard_id(&self) -> ShardId;
     fn sequence_number(&self) -> SequenceNumber;
 }
 
@@ -87,8 +87,8 @@ impl TombstoneInfo for Tombstone {
         self.id
     }
 
-    fn sequencer_id(&self) -> SequencerId {
-        self.sequencer_id
+    fn shard_id(&self) -> ShardId {
+        self.shard_id
     }
 
     fn sequence_number(&self) -> SequenceNumber {
@@ -174,17 +174,17 @@ where
     T: TombstoneInfo,
 {
     // Build sequencer-based lookup table.
-    let mut lookup_table: HashMap<SequencerId, Vec<&I>> = HashMap::default();
+    let mut lookup_table: HashMap<ShardId, Vec<&I>> = HashMap::default();
     for partition in ingester_partitions {
         lookup_table
-            .entry(partition.sequencer_id())
+            .entry(partition.shard_id())
             .or_default()
             .push(partition);
     }
 
     let mut exclude = HashSet::new();
     for t in tombstones {
-        if let Some(partitions) = lookup_table.get(&t.sequencer_id()) {
+        if let Some(partitions) = lookup_table.get(&t.shard_id()) {
             for p in partitions {
                 if let Some(persisted_max) = p.tombstone_max_sequence_number() {
                     if t.sequence_number() > persisted_max {
@@ -222,7 +222,7 @@ mod tests {
     fn test_filter_parquet_files_compactor_conflict() {
         let ingester_partitions = &[MockIngesterPartitionInfo {
             partition_id: PartitionId::new(1),
-            sequencer_id: SequencerId::new(1),
+            shard_id: ShardId::new(1),
             parquet_max_sequence_number: Some(SequenceNumber::new(10)),
             tombstone_max_sequence_number: None,
         }];
@@ -240,19 +240,19 @@ mod tests {
         let ingester_partitions = &[
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(1),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: Some(SequenceNumber::new(10)),
                 tombstone_max_sequence_number: None,
             },
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(2),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: None,
                 tombstone_max_sequence_number: None,
             },
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(3),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: Some(SequenceNumber::new(3)),
                 tombstone_max_sequence_number: None,
             },
@@ -321,25 +321,25 @@ mod tests {
         let ingester_partitions = &[
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(1),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: None,
                 tombstone_max_sequence_number: Some(SequenceNumber::new(10)),
             },
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(2),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: None,
                 tombstone_max_sequence_number: None,
             },
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(3),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 parquet_max_sequence_number: None,
                 tombstone_max_sequence_number: Some(SequenceNumber::new(3)),
             },
             MockIngesterPartitionInfo {
                 partition_id: PartitionId::new(4),
-                sequencer_id: SequencerId::new(2),
+                shard_id: ShardId::new(2),
                 parquet_max_sequence_number: None,
                 tombstone_max_sequence_number: Some(SequenceNumber::new(7)),
             },
@@ -347,52 +347,52 @@ mod tests {
         let tombstones = &[
             MockTombstoneInfo {
                 id: TombstoneId::new(1),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(2),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(2),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(3),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(3),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(4),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(4),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(9),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(5),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(10),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(6),
-                sequencer_id: SequencerId::new(1),
+                shard_id: ShardId::new(1),
                 sequence_number: SequenceNumber::new(11),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(7),
-                sequencer_id: SequencerId::new(2),
+                shard_id: ShardId::new(2),
                 sequence_number: SequenceNumber::new(6),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(8),
-                sequencer_id: SequencerId::new(2),
+                shard_id: ShardId::new(2),
                 sequence_number: SequenceNumber::new(7),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(9),
-                sequencer_id: SequencerId::new(2),
+                shard_id: ShardId::new(2),
                 sequence_number: SequenceNumber::new(8),
             },
             MockTombstoneInfo {
                 id: TombstoneId::new(10),
-                sequencer_id: SequencerId::new(3),
+                shard_id: ShardId::new(3),
                 sequence_number: SequenceNumber::new(10),
             },
         ];
@@ -418,7 +418,7 @@ mod tests {
     #[derive(Debug)]
     struct MockIngesterPartitionInfo {
         partition_id: PartitionId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         parquet_max_sequence_number: Option<SequenceNumber>,
         tombstone_max_sequence_number: Option<SequenceNumber>,
     }
@@ -428,8 +428,8 @@ mod tests {
             self.partition_id
         }
 
-        fn sequencer_id(&self) -> SequencerId {
-            self.sequencer_id
+        fn shard_id(&self) -> ShardId {
+            self.shard_id
         }
 
         fn parquet_max_sequence_number(&self) -> Option<SequenceNumber> {
@@ -465,7 +465,7 @@ mod tests {
     #[derive(Debug)]
     struct MockTombstoneInfo {
         id: TombstoneId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     }
 
@@ -474,8 +474,8 @@ mod tests {
             self.id
         }
 
-        fn sequencer_id(&self) -> SequencerId {
-            self.sequencer_id
+        fn shard_id(&self) -> ShardId {
+            self.shard_id
         }
 
         fn sequence_number(&self) -> SequenceNumber {

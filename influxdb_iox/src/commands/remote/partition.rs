@@ -5,7 +5,7 @@ use clap_blocks::object_store::make_object_store;
 use clap_blocks::{catalog_dsn::CatalogDsnConfig, object_store::ObjectStoreConfig};
 use data_types::{
     ColumnType, KafkaPartition, NamespaceId, NamespaceSchema as CatalogNamespaceSchema,
-    ParquetFile as CatalogParquetFile, ParquetFileParams, PartitionId, SequenceNumber, SequencerId,
+    ParquetFile as CatalogParquetFile, ParquetFileParams, PartitionId, SequenceNumber, ShardId,
     TableId, Timestamp,
 };
 use futures::future::join_all;
@@ -153,7 +153,7 @@ pub async fn command(connection: Connection, config: Config) -> Result<(), Error
                 let path = ParquetFilePath::new(
                     parquet_file.namespace_id,
                     parquet_file.table_id,
-                    parquet_file.sequencer_id,
+                    parquet_file.shard_id,
                     parquet_file.partition_id,
                     parquet_file.object_store_id,
                 );
@@ -307,7 +307,7 @@ async fn load_partition(
         .await?;
 
     Ok(PartitionMapping {
-        sequencer_id: sequencer.id,
+        shard_id: sequencer.id,
         table_id: table.id,
         partition_id: partition.id,
         remote_partition_id: remote_partition.id,
@@ -333,7 +333,7 @@ async fn load_parquet_files(
             None => {
                 println!("creating file {} in catalog", uuid);
                 let params = ParquetFileParams {
-                    sequencer_id: partition_mapping.sequencer_id,
+                    shard_id: partition_mapping.shard_id,
                     namespace_id,
                     table_id: partition_mapping.table_id,
                     partition_id: partition_mapping.partition_id,
@@ -361,7 +361,7 @@ async fn load_parquet_files(
 
 // keeps a mapping of the locally created partition and sequence to the remote partition id
 struct PartitionMapping {
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     table_id: TableId,
     partition_id: PartitionId,
     remote_partition_id: i64,
@@ -531,7 +531,7 @@ mod tests {
         }
 
         let partition_mapping = PartitionMapping {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             table_id: table.id,
             partition_id: partition.id,
             remote_partition_id: 4,
@@ -576,7 +576,7 @@ mod tests {
         // match those of the remote.
         let expected = vec![CatalogParquetFile {
             id: ParquetFileId::new(1),
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,

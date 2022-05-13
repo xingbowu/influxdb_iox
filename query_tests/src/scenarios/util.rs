@@ -4,8 +4,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use backoff::BackoffConfig;
 use data_types::{
-    DeletePredicate, NonEmptyString, PartitionId, Sequence, SequenceNumber, SequencerId,
-    TombstoneId,
+    DeletePredicate, NonEmptyString, PartitionId, Sequence, SequenceNumber, ShardId, TombstoneId,
 };
 use dml::{DmlDelete, DmlMeta, DmlOperation, DmlWrite};
 use futures::StreamExt;
@@ -841,7 +840,7 @@ impl LifecycleHandle for NoopLifecycleHandle {
     fn log_write(
         &self,
         _partition_id: PartitionId,
-        _sequencer_id: SequencerId,
+        _shard_id: ShardId,
         _sequence_number: SequenceNumber,
         _bytes_written: usize,
     ) -> bool {

@@ -10,7 +10,7 @@ use crate::{
     job::{Job, JobRegistry},
     poison::{PoisonCabinet, PoisonPill},
 };
-use data_types::{PartitionId, SequenceNumber, SequencerId};
+use data_types::{PartitionId, SequenceNumber, ShardId};
 use iox_time::{Time, TimeProvider};
 use metric::{Metric, U64Counter};
 use observability_deps::tracing::{error, info};
@@ -27,7 +27,7 @@ pub trait LifecycleHandle: Send + Sync + 'static {
     fn log_write(
         &self,
         partition_id: PartitionId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
         bytes_written: usize,
     ) -> bool;
@@ -56,7 +56,7 @@ impl LifecycleHandle for LifecycleHandleImpl {
     fn log_write(
         &self,
         partition_id: PartitionId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
         bytes_written: usize,
     ) -> bool {
@@ -67,7 +67,7 @@ impl LifecycleHandle for LifecycleHandleImpl {
             s.partition_stats
                 .entry(partition_id)
                 .or_insert_with(|| PartitionLifecycleStats {
-                    sequencer_id,
+                    shard_id,
                     partition_id,
                     first_write: now,
                     last_write: now,
@@ -200,8 +200,8 @@ pub struct LifecycleStats {
 /// The stats for a partition
 #[derive(Debug, Clone, Copy)]
 pub struct PartitionLifecycleStats {
-    /// The sequencer this partition is under
-    sequencer_id: SequencerId,
+    /// The shard this partition is under
+    shard_id: ShardId,
     /// The partition identifier
     partition_id: PartitionId,
     /// Time that the partition received its first write. This is reset anytime
@@ -330,12 +330,12 @@ impl LifecycleManager {
             rest = remaining;
         }
 
-        // for the sequencers that are getting data persisted, keep track of what
+        // for the shards that are getting data persisted, keep track of what
         // the highest seqeunce number was for each.
         let mut sequencer_maxes = BTreeMap::new();
         for s in &to_persist {
             sequencer_maxes
-                .entry(s.sequencer_id)
+                .entry(s.shard_id)
                 .and_modify(|sn| {
                     if *sn < s.first_sequence_number {
                         *sn = s.first_sequence_number;
@@ -367,29 +367,32 @@ impl LifecycleManager {
                 res.expect("not aborted").expect("task finished");
             }
 
-            // for the sequencers that had data persisted, update their min_unpersisted_sequence_number to
-            // either the minimum remaining in everything that didn't get persisted, or the highest
-            // number that was persisted. Marking the highest number as the state is ok because it
-            // just needs to represent the farthest we'd have to seek back in the write buffer. Any
-            // data replayed during recovery that has already been persisted will just be ignored.
+            // for the shards that had data persisted, update their min_unpersisted_sequence_number
+            // to either the minimum remaining in everything that didn't get persisted, or the
+            // highest number that was persisted. Marking the highest number as the state is ok
+            // because it just needs to represent the farthest we'd have to seek back in the write
+            // buffer. Any data replayed during recovery that has already been persisted will just
+            // be ignored.
             //
             // The calculation of the min unpersisted sequence number is:
-            // - If there is any unpersisted data (i.e. `rest` contains entries for that sequencer) then we take the
-            //   minimum sequence number from there. Note that there might be a gap between the data that we have just
-            //   persisted and the unpersisted section.
-            // - If there is NO unpersisted data, we take the max sequence number of the part that we have just
-            //   persisted. Note that can cannot use "max + 1" because the lifecycle handler receives writes on a
-            //   partition level and therefore might run while data for a single sequence number is added. So the max
-            //   sequence number that we have just persisted might have more data.
-            for (sequencer_id, sequence_number) in sequencer_maxes {
+            //
+            // - If there is any unpersisted data (i.e. `rest` contains entries for that shard)
+            //   then we take the minimum sequence number from there. Note that there might be a
+            //   gap between the data that we have just persisted and the unpersisted section.
+            // - If there is NO unpersisted data, we take the max sequence number of the part that
+            //   we have just persisted. Note that can cannot use "max + 1" because the lifecycle
+            //   handler receives writes on a partition level and therefore might run while data
+            //   for a single sequence number is added. So the max sequence number that we have
+            //   just persisted might have more data.
+            for (shard_id, sequence_number) in sequencer_maxes {
                 let min = rest
                     .iter()
-                    .filter(|s| s.sequencer_id == sequencer_id)
+                    .filter(|s| s.shard_id == shard_id)
                     .map(|s| s.first_sequence_number)
                     .min()
                     .unwrap_or(sequence_number);
                 persister
-                    .update_min_unpersisted_sequence_number(sequencer_id, min)
+                    .update_min_unpersisted_sequence_number(shard_id, min)
                     .await;
             }
         }
@@ -458,7 +461,7 @@ mod tests {
     #[derive(Default)]
     struct TestPersister {
         persist_called: Mutex<BTreeSet<PartitionId>>,
-        update_min_calls: Mutex<Vec<(SequencerId, SequenceNumber)>>,
+        update_min_calls: Mutex<Vec<(ShardId, SequenceNumber)>>,
     }
 
     #[async_trait]
@@ -470,11 +473,11 @@ mod tests {
 
         async fn update_min_unpersisted_sequence_number(
             &self,
-            sequencer_id: SequencerId,
+            shard_id: ShardId,
             sequence_number: SequenceNumber,
         ) {
             let mut u = self.update_min_calls.lock();
-            u.push((sequencer_id, sequence_number));
+            u.push((shard_id, sequence_number));
         }
     }
 
@@ -484,7 +487,7 @@ mod tests {
             p.contains(&partition_id)
         }
 
-        fn update_min_calls(&self) -> Vec<(SequencerId, SequenceNumber)> {
+        fn update_min_calls(&self) -> Vec<(ShardId, SequenceNumber)> {
             let u = self.update_min_calls.lock();
             u.clone()
         }
@@ -502,21 +505,18 @@ mod tests {
         let TestLifecycleManger {
             m, time_provider, ..
         } = TestLifecycleManger::new(config);
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let h = m.handle();
 
         // log first two writes at different times
-        assert!(!h.log_write(PartitionId::new(1), sequencer_id, SequenceNumber::new(1), 1));
+        assert!(!h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(1), 1));
         time_provider.inc(Duration::from_nanos(10));
-        assert!(!h.log_write(PartitionId::new(1), sequencer_id, SequenceNumber::new(2), 1));
+        assert!(!h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(2), 1));
 
         // log another write for different partition using a different handle
-        assert!(!m.handle().log_write(
-            PartitionId::new(2),
-            sequencer_id,
-            SequenceNumber::new(3),
-            3
-        ));
+        assert!(!m
+            .handle()
+            .log_write(PartitionId::new(2), shard_id, SequenceNumber::new(3), 3));
 
         let stats = m.stats();
         assert_eq!(stats.total_bytes, 5);
@@ -542,28 +542,18 @@ mod tests {
             partition_cold_threshold: Duration::from_secs(500),
         };
         let TestLifecycleManger { m, .. } = TestLifecycleManger::new(config);
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let h = m.handle();
 
-        assert!(!h.log_write(
-            PartitionId::new(1),
-            sequencer_id,
-            SequenceNumber::new(1),
-            15
-        ));
+        assert!(!h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(1), 15));
 
         // now it should indicate a pause
-        assert!(h.log_write(
-            PartitionId::new(1),
-            sequencer_id,
-            SequenceNumber::new(2),
-            10
-        ));
+        assert!(h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(2), 10));
         assert!(!h.can_resume_ingest());
 
         m.remove(PartitionId::new(1));
         assert!(h.can_resume_ingest());
-        assert!(!h.log_write(PartitionId::new(1), sequencer_id, SequenceNumber::new(3), 3));
+        assert!(!h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(3), 3));
     }
 
     #[tokio::test]
@@ -582,10 +572,10 @@ mod tests {
         } = TestLifecycleManger::new(config);
         let partition_id = PartitionId::new(1);
         let persister = Arc::new(TestPersister::default());
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let h = m.handle();
 
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(1), 10);
+        h.log_write(partition_id, shard_id, SequenceNumber::new(1), 10);
 
         m.maybe_persist(&persister).await;
         let stats = m.stats();
@@ -598,8 +588,9 @@ mod tests {
         // validate that from before, persist wasn't called for the partition
         assert!(!persister.persist_called_for(partition_id));
 
-        // write in data for a new partition so we can be sure it isn't persisted, but the older one is
-        h.log_write(PartitionId::new(2), sequencer_id, SequenceNumber::new(2), 6);
+        // write in data for a new partition so we can be sure it isn't persisted, but the older
+        // one is
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 6);
 
         m.maybe_persist(&persister).await;
 
@@ -607,7 +598,7 @@ mod tests {
         assert!(!persister.persist_called_for(PartitionId::new(2)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(2))]
+            vec![(shard_id, SequenceNumber::new(2))]
         );
 
         let stats = m.stats();
@@ -635,10 +626,10 @@ mod tests {
         } = TestLifecycleManger::new(config);
         let partition_id = PartitionId::new(1);
         let persister = Arc::new(TestPersister::default());
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let h = m.handle();
 
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(1), 10);
+        h.log_write(partition_id, shard_id, SequenceNumber::new(1), 10);
 
         m.maybe_persist(&persister).await;
         let stats = m.stats();
@@ -651,9 +642,10 @@ mod tests {
         // validate that from before, persist wasn't called for the partition
         assert!(!persister.persist_called_for(partition_id));
 
-        // write in data for a new partition so we can be sure it isn't persisted, but the older one is
-        h.log_write(PartitionId::new(2), sequencer_id, SequenceNumber::new(2), 6);
-        h.log_write(PartitionId::new(3), sequencer_id, SequenceNumber::new(3), 7);
+        // write in data for a new partition so we can be sure it isn't persisted, but the older
+        // one is
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 6);
+        h.log_write(PartitionId::new(3), shard_id, SequenceNumber::new(3), 7);
 
         m.maybe_persist(&persister).await;
 
@@ -661,7 +653,7 @@ mod tests {
         assert!(!persister.persist_called_for(PartitionId::new(2)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(2))]
+            vec![(shard_id, SequenceNumber::new(2))]
         );
 
         let stats = m.stats();
@@ -688,12 +680,12 @@ mod tests {
             metric_registry,
             ..
         } = TestLifecycleManger::new(config);
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let h = m.handle();
 
         let partition_id = PartitionId::new(1);
         let persister = Arc::new(TestPersister::default());
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(1), 4);
+        h.log_write(partition_id, shard_id, SequenceNumber::new(1), 4);
 
         m.maybe_persist(&persister).await;
 
@@ -703,8 +695,8 @@ mod tests {
         assert!(!persister.persist_called_for(partition_id));
 
         // introduce a new partition under the limit to verify it doesn't get taken with the other
-        h.log_write(PartitionId::new(2), sequencer_id, SequenceNumber::new(2), 3);
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(3), 5);
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 3);
+        h.log_write(partition_id, shard_id, SequenceNumber::new(3), 5);
 
         m.maybe_persist(&persister).await;
 
@@ -712,7 +704,7 @@ mod tests {
         assert!(!persister.persist_called_for(PartitionId::new(2)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(2))]
+            vec![(shard_id, SequenceNumber::new(2))]
         );
 
         let stats = m.stats();
@@ -733,7 +725,7 @@ mod tests {
             partition_age_threshold: Duration::from_millis(1000),
             partition_cold_threshold: Duration::from_secs(500),
         };
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let TestLifecycleManger {
             mut m,
             metric_registry,
@@ -742,13 +734,8 @@ mod tests {
         let h = m.handle();
         let partition_id = PartitionId::new(1);
         let persister = Arc::new(TestPersister::default());
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(1), 8);
-        h.log_write(
-            PartitionId::new(2),
-            sequencer_id,
-            SequenceNumber::new(2),
-            13,
-        );
+        h.log_write(partition_id, shard_id, SequenceNumber::new(1), 8);
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 13);
 
         m.maybe_persist(&persister).await;
 
@@ -760,31 +747,27 @@ mod tests {
         assert!(persister.persist_called_for(PartitionId::new(2)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(1))]
+            vec![(shard_id, SequenceNumber::new(1))]
         );
 
         // add that partition back in over size
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(3), 20);
-        h.log_write(
-            PartitionId::new(2),
-            sequencer_id,
-            SequenceNumber::new(4),
-            21,
-        );
+        h.log_write(partition_id, shard_id, SequenceNumber::new(3), 20);
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(4), 21);
 
-        // both partitions should now need to be persisted to bring us below the mem threshold of 20.
+        // both partitions should now need to be persisted to bring us below the mem threshold of
+        // 20.
         m.maybe_persist(&persister).await;
 
         assert!(persister.persist_called_for(partition_id));
         assert!(persister.persist_called_for(PartitionId::new(2)));
-        // because the persister is now empty, it has to make the last call with the last sequence number it
-        // knows about. Even though this has been persisted, this fine since any already persisted
-        // data will just be ignored on startup.
+        // because the persister is now empty, it has to make the last call with the last sequence
+        // number it knows about. Even though this has been persisted, this fine since any already
+        // persisted data will just be ignored on startup.
         assert_eq!(
             persister.update_min_calls(),
             vec![
-                (sequencer_id, SequenceNumber::new(1)),
-                (sequencer_id, SequenceNumber::new(4))
+                (shard_id, SequenceNumber::new(1)),
+                (shard_id, SequenceNumber::new(4))
             ]
         );
 
@@ -805,7 +788,7 @@ mod tests {
             partition_age_threshold: Duration::from_millis(1000),
             partition_cold_threshold: Duration::from_secs(500),
         };
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
         let TestLifecycleManger {
             mut m,
             time_provider,
@@ -813,11 +796,11 @@ mod tests {
         } = TestLifecycleManger::new(config);
         let h = m.handle();
         let persister = Arc::new(TestPersister::default());
-        h.log_write(PartitionId::new(1), sequencer_id, SequenceNumber::new(1), 4);
+        h.log_write(PartitionId::new(1), shard_id, SequenceNumber::new(1), 4);
         time_provider.inc(Duration::from_nanos(1));
-        h.log_write(PartitionId::new(2), sequencer_id, SequenceNumber::new(2), 6);
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 6);
         time_provider.inc(Duration::from_nanos(1));
-        h.log_write(PartitionId::new(3), sequencer_id, SequenceNumber::new(3), 3);
+        h.log_write(PartitionId::new(3), shard_id, SequenceNumber::new(3), 3);
 
         m.maybe_persist(&persister).await;
 
@@ -830,7 +813,7 @@ mod tests {
         assert!(persister.persist_called_for(PartitionId::new(1)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(3))]
+            vec![(shard_id, SequenceNumber::new(3))]
         );
 
         let memory_counter = get_counter(&metric_registry, "memory");
@@ -854,9 +837,9 @@ mod tests {
         let h = m.handle();
         let partition_id = PartitionId::new(1);
         let persister = Arc::new(TestPersister::default());
-        let sequencer_id = SequencerId::new(1);
+        let shard_id = ShardId::new(1);
 
-        h.log_write(partition_id, sequencer_id, SequenceNumber::new(1), 10);
+        h.log_write(partition_id, shard_id, SequenceNumber::new(1), 10);
 
         m.maybe_persist(&persister).await;
         let stats = m.stats();
@@ -869,8 +852,9 @@ mod tests {
         // validate that from before, persist wasn't called for the partition
         assert!(!persister.persist_called_for(partition_id));
 
-        // write in data for a new partition so we can be sure it isn't persisted, but the older one is
-        h.log_write(PartitionId::new(2), sequencer_id, SequenceNumber::new(2), 6);
+        // write in data for a new partition so we can be sure it isn't persisted, but the older
+        // one is
+        h.log_write(PartitionId::new(2), shard_id, SequenceNumber::new(2), 6);
 
         m.maybe_persist(&persister).await;
 
@@ -878,7 +862,7 @@ mod tests {
         assert!(!persister.persist_called_for(PartitionId::new(2)));
         assert_eq!(
             persister.update_min_calls(),
-            vec![(sequencer_id, SequenceNumber::new(2))]
+            vec![(shard_id, SequenceNumber::new(2))]
         );
 
         let stats = m.stats();

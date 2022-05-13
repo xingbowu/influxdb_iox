@@ -8,7 +8,7 @@ use bytes::Bytes;
 use data_types::{
     Column, ColumnType, KafkaPartition, KafkaTopic, Namespace, ParquetFile, ParquetFileId,
     ParquetFileParams, ParquetFileWithMetadata, Partition, PartitionId, QueryPool, SequenceNumber,
-    Sequencer, SequencerId, Table, TableId, Timestamp, Tombstone, TombstoneId,
+    Sequencer, ShardId, Table, TableId, Timestamp, Tombstone, TombstoneId,
 };
 use datafusion::physical_plan::metrics::Count;
 use iox_catalog::{
@@ -154,27 +154,24 @@ impl TestCatalog {
     }
 
     /// List level 0 files
-    pub async fn list_level_0_files(
-        self: &Arc<Self>,
-        sequencer_id: SequencerId,
-    ) -> Vec<ParquetFile> {
+    pub async fn list_level_0_files(self: &Arc<Self>, shard_id: ShardId) -> Vec<ParquetFile> {
         self.catalog
             .repositories()
             .await
             .parquet_files()
-            .level_0(sequencer_id)
+            .level_0(shard_id)
             .await
             .unwrap()
     }
 
     /// Count level 0 files
-    pub async fn count_level_0_files(self: &Arc<Self>, sequencer_id: SequencerId) -> usize {
+    pub async fn count_level_0_files(self: &Arc<Self>, shard_id: ShardId) -> usize {
         let level_0 = self
             .catalog
             .repositories()
             .await
             .parquet_files()
-            .level_0(sequencer_id)
+            .level_0(shard_id)
             .await
             .unwrap();
         level_0.len()
@@ -516,7 +513,7 @@ impl TestPartition {
             creation_timestamp: now(),
             namespace_id: self.namespace.namespace.id,
             namespace_name: self.namespace.namespace.name.clone().into(),
-            sequencer_id: self.sequencer.sequencer.id,
+            shard_id: self.sequencer.sequencer.id,
             table_id: self.table.table.id,
             table_name: self.table.table.name.clone().into(),
             partition_id: self.partition.id,
@@ -537,7 +534,7 @@ impl TestPartition {
         .await;
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: self.sequencer.sequencer.id,
+            shard_id: self.sequencer.sequencer.id,
             namespace_id: self.namespace.namespace.id,
             table_id: self.table.table.id,
             partition_id: self.partition.id,
@@ -669,7 +666,7 @@ async fn create_parquet_file(
     let path = ParquetFilePath::new(
         metadata.namespace_id,
         metadata.table_id,
-        metadata.sequencer_id,
+        metadata.shard_id,
         metadata.partition_id,
         metadata.object_store_id,
     );

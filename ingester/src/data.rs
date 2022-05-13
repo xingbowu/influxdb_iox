@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use backoff::{Backoff, BackoffConfig};
 use data_types::{
     DeletePredicate, KafkaPartition, NamespaceId, PartitionId, PartitionInfo, SequenceNumber,
-    SequencerId, TableId, Timestamp, Tombstone,
+    ShardId, TableId, Timestamp, Tombstone,
 };
 use datafusion::physical_plan::SendableRecordBatchStream;
 use dml::DmlOperation;
@@ -50,8 +50,8 @@ pub enum Error {
         id: KafkaPartition,
     },
 
-    #[snafu(display("Sequencer {} not found in data map", sequencer_id))]
-    SequencerNotFound { sequencer_id: SequencerId },
+    #[snafu(display("Shard {} not found in data map", shard_id))]
+    ShardNotFound { shard_id: ShardId },
 
     #[snafu(display(
         "Sequencer not found for kafka partition {} in data map",
@@ -119,7 +119,7 @@ pub struct IngesterData {
     /// This map gets set up on initialization of the ingester so it won't ever be modified.
     /// The content of each SequenceData will get changed when more namespaces and tables
     /// get ingested.
-    sequencers: BTreeMap<SequencerId, SequencerData>,
+    sequencers: BTreeMap<ShardId, SequencerData>,
 
     /// Partitioner.
     partitioner: Arc<dyn Partitioner>,
@@ -136,7 +136,7 @@ impl IngesterData {
     pub fn new(
         object_store: Arc<DynObjectStore>,
         catalog: Arc<dyn Catalog>,
-        sequencers: BTreeMap<SequencerId, SequencerData>,
+        sequencers: BTreeMap<ShardId, SequencerData>,
         partitioner: Arc<dyn Partitioner>,
         exec: Arc<Executor>,
         backoff_config: BackoffConfig,
@@ -156,14 +156,14 @@ impl IngesterData {
         &self.exec
     }
 
-    /// Get sequencer data for specific sequencer.
+    /// Get sequencer data for specific shard.
     #[allow(dead_code)] // Used in tests
-    pub(crate) fn sequencer(&self, sequencer_id: SequencerId) -> Option<&SequencerData> {
-        self.sequencers.get(&sequencer_id)
+    pub(crate) fn sequencer(&self, shard_id: ShardId) -> Option<&SequencerData> {
+        self.sequencers.get(&shard_id)
     }
 
     /// Get iterator over sequencers (ID and data).
-    pub(crate) fn sequencers(&self) -> impl Iterator<Item = (&SequencerId, &SequencerData)> {
+    pub(crate) fn sequencers(&self) -> impl Iterator<Item = (&ShardId, &SequencerData)> {
         self.sequencers.iter()
     }
 
@@ -175,18 +175,18 @@ impl IngesterData {
     /// be paused, this function will return true.
     pub async fn buffer_operation(
         &self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         dml_operation: DmlOperation,
         lifecycle_handle: &dyn LifecycleHandle,
     ) -> Result<bool> {
         let sequencer_data = self
             .sequencers
-            .get(&sequencer_id)
-            .context(SequencerNotFoundSnafu { sequencer_id })?;
+            .get(&shard_id)
+            .context(ShardNotFoundSnafu { shard_id })?;
         sequencer_data
             .buffer_operation(
                 dml_operation,
-                sequencer_id,
+                shard_id,
                 self.catalog.as_ref(),
                 lifecycle_handle,
                 self.partitioner.as_ref(),
@@ -234,7 +234,7 @@ pub trait Persister: Send + Sync + 'static {
     /// that all data would be correctly replayed on startup.
     async fn update_min_unpersisted_sequence_number(
         &self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     );
 }
@@ -257,19 +257,19 @@ impl Persister for IngesterData {
             .unwrap_or_else(|| panic!("partition {} not found in catalog", partition_id));
         let sequencer_data = self
             .sequencers
-            .get(&partition_info.partition.sequencer_id)
+            .get(&partition_info.partition.shard_id)
             .unwrap_or_else(|| {
                 panic!(
-                    "sequencer state for {} not in ingester data",
-                    partition_info.partition.sequencer_id
+                    "shard state for {} not in ingester data",
+                    partition_info.partition.shard_id
                 )
             }); //{
         let namespace = sequencer_data
             .namespace(&partition_info.namespace_name)
             .unwrap_or_else(|| {
                 panic!(
-                    "namespace {} not in sequencer {} state",
-                    partition_info.namespace_name, partition_info.partition.sequencer_id
+                    "namespace {} not in shard {} state",
+                    partition_info.namespace_name, partition_info.partition.shard_id
                 )
             });
 
@@ -350,7 +350,7 @@ impl Persister for IngesterData {
 
     async fn update_min_unpersisted_sequence_number(
         &self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) {
         Backoff::new(&self.backoff_config)
@@ -359,7 +359,7 @@ impl Persister for IngesterData {
                     .repositories()
                     .await
                     .sequencers()
-                    .update_min_unpersisted_sequence_number(sequencer_id, sequence_number)
+                    .update_min_unpersisted_sequence_number(shard_id, sequence_number)
                     .await
             })
             .await
@@ -412,14 +412,14 @@ impl SequencerData {
         }
     }
 
-    /// Store the write or delete in the sequencer. Deletes will
+    /// Store the write or delete in the shard. Deletes will
     /// be written into the catalog before getting stored in the buffer.
     /// Any writes that create new IOx partitions will have those records
     /// created in the catalog before putting into the buffer.
     pub async fn buffer_operation(
         &self,
         dml_operation: DmlOperation,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         catalog: &dyn Catalog,
         lifecycle_handle: &dyn LifecycleHandle,
         partitioner: &dyn Partitioner,
@@ -436,7 +436,7 @@ impl SequencerData {
         namespace_data
             .buffer_operation(
                 dml_operation,
-                sequencer_id,
+                shard_id,
                 catalog,
                 lifecycle_handle,
                 partitioner,
@@ -538,7 +538,7 @@ impl NamespaceData {
     pub async fn buffer_operation(
         &self,
         dml_operation: DmlOperation,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         catalog: &dyn Catalog,
         lifecycle_handle: &dyn LifecycleHandle,
         partitioner: &dyn Partitioner,
@@ -559,7 +559,7 @@ impl NamespaceData {
                 for (t, b) in write.into_tables() {
                     let table_data = match self.table_data(&t) {
                         Some(t) => t,
-                        None => self.insert_table(sequencer_id, &t, catalog).await?,
+                        None => self.insert_table(shard_id, &t, catalog).await?,
                     };
 
                     let mut table_data = table_data.write().await;
@@ -567,7 +567,7 @@ impl NamespaceData {
                         .buffer_table_write(
                             sequence_number,
                             b,
-                            sequencer_id,
+                            shard_id,
                             catalog,
                             lifecycle_handle,
                             partitioner,
@@ -583,7 +583,7 @@ impl NamespaceData {
                 let table_name = delete.table_name().context(TableNotPresentSnafu)?;
                 let table_data = match self.table_data(table_name) {
                     Some(t) => t,
-                    None => self.insert_table(sequencer_id, table_name, catalog).await?,
+                    None => self.insert_table(shard_id, table_name, catalog).await?,
                 };
 
                 let mut table_data = table_data.write().await;
@@ -592,7 +592,7 @@ impl NamespaceData {
                     .buffer_delete(
                         table_name,
                         delete.predicate(),
-                        sequencer_id,
+                        shard_id,
                         sequence_number,
                         catalog,
                         executor,
@@ -641,7 +641,7 @@ impl NamespaceData {
                 .get_mut(&partition_info.partition.partition_key)
                 .and_then(|partition_data| {
                     partition_data.snapshot_to_persisting_batch(
-                        partition_info.partition.sequencer_id,
+                        partition_info.partition.shard_id,
                         partition_info.partition.table_id,
                         partition_info.partition.id,
                         &partition_info.table_name,
@@ -664,14 +664,14 @@ impl NamespaceData {
     /// Inserts the table or returns it if it happens to be inserted by some other thread
     async fn insert_table(
         &self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_name: &str,
         catalog: &dyn Catalog,
     ) -> Result<Arc<tokio::sync::RwLock<TableData>>> {
         let mut repos = catalog.repositories().await;
         let info = repos
             .tables()
-            .get_table_persist_info(sequencer_id, self.namespace_id, table_name)
+            .get_table_persist_info(shard_id, self.namespace_id, table_name)
             .await
             .context(CatalogSnafu)?
             .context(TableNotFoundSnafu { table_name })?;
@@ -783,7 +783,7 @@ impl TableData {
         &mut self,
         sequence_number: SequenceNumber,
         batch: MutableBatch,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         catalog: &dyn Catalog,
         lifecycle_handle: &dyn LifecycleHandle,
         partitioner: &dyn Partitioner,
@@ -795,7 +795,7 @@ impl TableData {
         let partition_data = match self.partition_data.get_mut(&partition_key) {
             Some(p) => p,
             None => {
-                self.insert_partition(&partition_key, sequencer_id, catalog)
+                self.insert_partition(&partition_key, shard_id, catalog)
                     .await?;
                 self.partition_data.get_mut(&partition_key).unwrap()
             }
@@ -808,12 +808,8 @@ impl TableData {
             }
         }
 
-        let should_pause = lifecycle_handle.log_write(
-            partition_data.id,
-            sequencer_id,
-            sequence_number,
-            batch.size(),
-        );
+        let should_pause =
+            lifecycle_handle.log_write(partition_data.id, shard_id, sequence_number, batch.size());
         partition_data.buffer_write(sequence_number, batch)?;
 
         Ok(should_pause)
@@ -823,7 +819,7 @@ impl TableData {
         &mut self,
         table_name: &str,
         predicate: &DeletePredicate,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
         catalog: &dyn Catalog,
         executor: &Executor,
@@ -836,7 +832,7 @@ impl TableData {
             .tombstones()
             .create_or_get(
                 self.table_id,
-                sequencer_id,
+                shard_id,
                 sequence_number,
                 min_time,
                 max_time,
@@ -877,13 +873,13 @@ impl TableData {
     async fn insert_partition(
         &mut self,
         partition_key: &str,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         catalog: &dyn Catalog,
     ) -> Result<()> {
         let mut repos = catalog.repositories().await;
         let partition = repos
             .partitions()
-            .create_or_get(partition_key, sequencer_id, self.table_id)
+            .create_or_get(partition_key, shard_id, self.table_id)
             .await
             .context(CatalogSnafu)?;
 
@@ -949,13 +945,13 @@ impl PartitionData {
     /// Snapshot anything in the buffer and move all snapshot data into a persisting batch
     pub fn snapshot_to_persisting_batch(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
         partition_id: PartitionId,
         table_name: &str,
     ) -> Option<Arc<PersistingBatch>> {
         self.data
-            .snapshot_to_persisting(sequencer_id, table_id, partition_id, table_name)
+            .snapshot_to_persisting(shard_id, table_id, partition_id, table_name)
     }
 
     /// Snapshot whatever is in the buffer and return a new vec of the
@@ -1230,7 +1226,7 @@ impl DataBuffer {
     /// Panics if there is already a persisting batch.
     pub fn snapshot_to_persisting(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
         partition_id: PartitionId,
         table_name: &str,
@@ -1241,7 +1237,7 @@ impl DataBuffer {
 
         if let Some(queryable_batch) = self.snapshot_to_queryable_batch(table_name, None) {
             let persisting_batch = Arc::new(PersistingBatch {
-                sequencer_id,
+                shard_id,
                 table_id,
                 partition_id,
                 object_store_id: Uuid::new_v4(),
@@ -1372,8 +1368,8 @@ impl SnapshotBatch {
 /// a parquet file for given set of SnapshotBatches
 #[derive(Debug, PartialEq, Clone)]
 pub struct PersistingBatch {
-    /// Sequencer id of the data
-    pub(crate) sequencer_id: SequencerId,
+    /// Shard id of the data
+    pub(crate) shard_id: ShardId,
 
     /// Table id of the data
     pub(crate) table_id: TableId,
@@ -1794,7 +1790,7 @@ mod tests {
         assert_eq!(pf.max_time, Timestamp::new(30));
         assert_eq!(pf.min_sequence_number, SequenceNumber::new(1));
         assert_eq!(pf.max_sequence_number, SequenceNumber::new(2));
-        assert_eq!(pf.sequencer_id, sequencer1.id);
+        assert_eq!(pf.shard_id, sequencer1.id);
         assert!(pf.to_delete.is_none());
 
         // verify it set a sort key on the partition in the catalog
@@ -1868,7 +1864,7 @@ mod tests {
         let ts = create_tombstone(
             1,         // tombstone id
             t_id,      // table id
-            s_id,      // sequencer id
+            s_id,      // shard id
             3,         // delete's seq_number
             0,         // min time of data to get deleted
             20,        // max time of data to get deleted
@@ -1930,7 +1926,7 @@ mod tests {
         let ts = create_tombstone(
             2,             // tombstone id
             t_id,          // table id
-            s_id,          // sequencer id
+            s_id,          // shard id
             6,             // delete's seq_number
             10,            // min time of data to get deleted
             50,            // max time of data to get deleted
@@ -1962,7 +1958,7 @@ mod tests {
         // Persisting
         let p_batch = p
             .snapshot_to_persisting_batch(
-                SequencerId::new(s_id),
+                ShardId::new(s_id),
                 TableId::new(t_id),
                 PartitionId::new(p_id),
                 table_name,
@@ -2136,7 +2132,7 @@ mod tests {
             .unwrap();
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,

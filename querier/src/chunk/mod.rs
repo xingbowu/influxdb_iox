@@ -4,7 +4,7 @@ use crate::cache::CatalogCache;
 use arrow::record_batch::RecordBatch;
 use data_types::{
     ChunkId, ChunkOrder, DeletePredicate, ParquetFileId, ParquetFileWithMetadata, PartitionId,
-    SequenceNumber, SequencerId, TimestampMinMax,
+    SequenceNumber, ShardId, TimestampMinMax,
 };
 use futures::StreamExt;
 use iox_catalog::interface::Catalog;
@@ -38,8 +38,8 @@ pub struct ChunkMeta {
     /// Partition sort key
     partition_sort_key: Option<SortKey>,
 
-    /// Sequencer that created the data within this chunk.
-    sequencer_id: SequencerId,
+    /// Shard that created the data within this chunk.
+    shard_id: ShardId,
 
     /// Partition ID.
     partition_id: PartitionId,
@@ -67,9 +67,9 @@ impl ChunkMeta {
         self.partition_sort_key.as_ref()
     }
 
-    /// Sequencer that created the data within this chunk.
-    pub fn sequencer_id(&self) -> SequencerId {
-        self.sequencer_id
+    /// Shard that created the data within this chunk.
+    pub fn shard_id(&self) -> ShardId {
+        self.shard_id
     }
 
     /// Partition ID.
@@ -261,7 +261,7 @@ impl ParquetChunkAdapter {
             order,
             sort_key: iox_metadata.sort_key.clone(),
             partition_sort_key,
-            sequencer_id: iox_metadata.sequencer_id,
+            shard_id: iox_metadata.shard_id,
             partition_id: iox_metadata.partition_id,
             min_sequence_number: parquet_file.min_sequence_number,
             max_sequence_number: parquet_file.max_sequence_number,

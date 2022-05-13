@@ -63,7 +63,7 @@ pub async fn persist(
     let path = ParquetFilePath::new(
         metadata.namespace_id,
         metadata.table_id,
-        metadata.sequencer_id,
+        metadata.shard_id,
         metadata.partition_id,
         metadata.object_store_id,
     );
@@ -81,7 +81,7 @@ pub async fn persist(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use data_types::{NamespaceId, PartitionId, SequenceNumber, SequencerId, TableId};
+    use data_types::{NamespaceId, PartitionId, SequenceNumber, ShardId, TableId};
     use futures::{StreamExt, TryStreamExt};
     use iox_catalog::interface::INITIAL_COMPACTION_LEVEL;
     use iox_time::Time;
@@ -105,7 +105,7 @@ mod tests {
             creation_timestamp: now(),
             namespace_id: NamespaceId::new(1),
             namespace_name: "mydata".into(),
-            sequencer_id: SequencerId::new(2),
+            shard_id: ShardId::new(2),
             table_id: TableId::new(3),
             table_name: "temperature".into(),
             partition_id: PartitionId::new(4),
@@ -135,7 +135,7 @@ mod tests {
             creation_timestamp: now(),
             namespace_id: NamespaceId::new(1),
             namespace_name: "mydata".into(),
-            sequencer_id: SequencerId::new(2),
+            shard_id: ShardId::new(2),
             table_id: TableId::new(3),
             table_name: "temperature".into(),
             partition_id: PartitionId::new(4),

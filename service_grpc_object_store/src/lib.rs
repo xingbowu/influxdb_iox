@@ -68,7 +68,7 @@ impl object_store_service_server::ObjectStoreService for ObjectStoreService {
         let path = ParquetFilePath::new(
             parquet_file.namespace_id,
             parquet_file.table_id,
-            parquet_file.sequencer_id,
+            parquet_file.shard_id,
             parquet_file.partition_id,
             parquet_file.object_store_id,
         );
@@ -140,7 +140,7 @@ mod tests {
                 .await
                 .unwrap();
             let p1params = ParquetFileParams {
-                sequencer_id: sequencer.id,
+                shard_id: sequencer.id,
                 namespace_id: namespace.id,
                 table_id: table.id,
                 partition_id: partition.id,
@@ -165,7 +165,7 @@ mod tests {
         let path = ParquetFilePath::new(
             p1.namespace_id,
             p1.table_id,
-            p1.sequencer_id,
+            p1.shard_id,
             p1.partition_id,
             p1.object_store_id,
         );

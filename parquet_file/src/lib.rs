@@ -12,7 +12,7 @@ pub mod chunk;
 pub mod metadata;
 pub mod storage;
 
-use data_types::{NamespaceId, PartitionId, SequencerId, TableId};
+use data_types::{NamespaceId, PartitionId, ShardId, TableId};
 use object_store::path::Path;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ use uuid::Uuid;
 pub struct ParquetFilePath {
     namespace_id: NamespaceId,
     table_id: TableId,
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     partition_id: PartitionId,
     object_store_id: Uuid,
 }
@@ -32,14 +32,14 @@ impl ParquetFilePath {
     pub fn new(
         namespace_id: NamespaceId,
         table_id: TableId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         partition_id: PartitionId,
         object_store_id: Uuid,
     ) -> Self {
         Self {
             namespace_id,
             table_id,
-            sequencer_id,
+            shard_id,
             partition_id,
             object_store_id,
         }
@@ -50,7 +50,7 @@ impl ParquetFilePath {
         let Self {
             namespace_id,
             table_id,
-            sequencer_id,
+            shard_id,
             partition_id,
             object_store_id,
         } = self;
@@ -58,7 +58,7 @@ impl ParquetFilePath {
         Path::from_iter([
             namespace_id.to_string().as_str(),
             table_id.to_string().as_str(),
-            sequencer_id.to_string().as_str(),
+            shard_id.to_string().as_str(),
             partition_id.to_string().as_str(),
             &format!("{}.parquet", object_store_id),
         ])
@@ -80,7 +80,7 @@ mod tests {
         let pfp = ParquetFilePath::new(
             NamespaceId::new(1),
             TableId::new(2),
-            SequencerId::new(3),
+            ShardId::new(3),
             PartitionId::new(4),
             Uuid::nil(),
         );

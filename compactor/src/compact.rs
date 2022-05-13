@@ -12,8 +12,8 @@ use arrow::record_batch::RecordBatch;
 use backoff::{Backoff, BackoffConfig};
 use bytes::Bytes;
 use data_types::{
-    ParquetFile, ParquetFileId, ParquetFileWithMetadata, PartitionId, SequencerId, TableId,
-    Timestamp, Tombstone, TombstoneId,
+    ParquetFile, ParquetFileId, ParquetFileWithMetadata, PartitionId, ShardId, TableId, Timestamp,
+    Tombstone, TombstoneId,
 };
 use datafusion::error::DataFusionError;
 use iox_catalog::interface::{Catalog, Transaction, INITIAL_COMPACTION_LEVEL};
@@ -45,26 +45,23 @@ use uuid::Uuid;
 #[derive(Debug, Snafu)]
 #[allow(missing_copy_implementations, missing_docs)]
 pub enum Error {
-    #[snafu(display(
-        "Cannot compact parquet files for unassigned sequencer ID {}",
-        sequencer_id
-    ))]
-    SequencerNotFound { sequencer_id: SequencerId },
+    #[snafu(display("Cannot compact parquet files for unassigned shard ID {}", shard_id))]
+    SequencerNotFound { shard_id: ShardId },
 
     #[snafu(display(
         "The given parquet files are not in the same partition ({}, {}, {}), ({}, {}, {})",
-        sequencer_id_1,
+        shard_id_1,
         table_id_1,
         partition_id_1,
-        sequencer_id_2,
+        shard_id_2,
         table_id_2,
         partition_id_2
     ))]
     NotSamePartition {
-        sequencer_id_1: SequencerId,
+        shard_id_1: ShardId,
         table_id_1: TableId,
         partition_id_1: PartitionId,
-        sequencer_id_2: SequencerId,
+        shard_id_2: ShardId,
         table_id_2: TableId,
         partition_id_2: PartitionId,
     },
@@ -187,7 +184,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug)]
 pub struct Compactor {
     /// Sequencers assigned to this compactor
-    sequencers: Vec<SequencerId>,
+    sequencers: Vec<ShardId>,
     /// Object store for reading and persistence of parquet files
     object_store: Arc<DynObjectStore>,
     /// The global catalog for schema, parquet files and tombstones
@@ -232,7 +229,7 @@ impl Compactor {
     /// Initialize the Compactor Data
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        sequencers: Vec<SequencerId>,
+        sequencers: Vec<ShardId>,
         catalog: Arc<dyn Catalog>,
         object_store: Arc<DynObjectStore>,
         exec: Arc<Executor>,
@@ -297,12 +294,12 @@ impl Compactor {
         }
     }
 
-    async fn level_0_parquet_files(&self, sequencer_id: SequencerId) -> Result<Vec<ParquetFile>> {
+    async fn level_0_parquet_files(&self, shard_id: ShardId) -> Result<Vec<ParquetFile>> {
         let mut repos = self.catalog.repositories().await;
 
         repos
             .parquet_files()
-            .level_0(sequencer_id)
+            .level_0(shard_id)
             .await
             .context(Level0Snafu)
     }
@@ -336,15 +333,15 @@ impl Compactor {
     pub async fn partitions_to_compact(&self) -> Result<Vec<PartitionCompactionCandidate>> {
         let mut candidates = vec![];
 
-        for sequencer_id in &self.sequencers {
+        for shard_id in &self.sequencers {
             // Read level-0 parquet files
-            let level_0_files = self.level_0_parquet_files(*sequencer_id).await?;
+            let level_0_files = self.level_0_parquet_files(*shard_id).await?;
 
             let mut partitions = BTreeMap::new();
             for f in level_0_files {
                 let mut p = partitions.entry(f.partition_id).or_insert_with(|| {
                     PartitionCompactionCandidate {
-                        sequencer_id: *sequencer_id,
+                        shard_id: *shard_id,
                         table_id: f.table_id,
                         partition_id: f.partition_id,
                         level_0_file_count: 0,
@@ -360,8 +357,7 @@ impl Compactor {
             let mut partitions: Vec<_> = partitions.into_values().collect();
 
             let total_size = partitions.iter().fold(0, |t, p| t + p.file_size_bytes);
-            let attributes =
-                Attributes::from([("sequencer_id", format!("{}", *sequencer_id).into())]);
+            let attributes = Attributes::from([("shard_id", format!("{}", *shard_id).into())]);
 
             let number_gauge = self.compaction_candidate_gauge.recorder(attributes.clone());
             number_gauge.set(partitions.len() as u64);
@@ -428,7 +424,7 @@ impl Compactor {
             // old catalogs)
             .expect("Partition sort key should have been available in the catalog");
 
-        let sequencer_id = parquet_files[0].sequencer_id;
+        let shard_id = parquet_files[0].shard_id;
         let file_count = parquet_files.len();
         let mut actual_compacted_file_count = file_count;
 
@@ -523,7 +519,7 @@ impl Compactor {
         // Upgrade old level-0 to level 1
         self.update_to_level_1(&upgrade_level_list).await?;
 
-        let attributes = Attributes::from([("sequencer_id", format!("{}", sequencer_id).into())]);
+        let attributes = Attributes::from([("shard_id", format!("{}", shard_id).into())]);
         if !upgrade_level_list.is_empty() {
             let promotion_counter = self.level_promotion_counter.recorder(attributes.clone());
             promotion_counter.inc(upgrade_level_list.len() as u64);
@@ -628,17 +624,17 @@ impl Compactor {
             for file in tail {
                 tombstone_map.append(&mut file.tombstones());
 
-                let is_same = file.data.sequencer_id == head.data.sequencer_id
+                let is_same = file.data.shard_id == head.data.shard_id
                     && file.data.table_id == head.data.table_id
                     && file.data.partition_id == head.data.partition_id;
 
                 ensure!(
                     is_same,
                     NotSamePartitionSnafu {
-                        sequencer_id_1: head.data.sequencer_id,
+                        shard_id_1: head.data.shard_id,
                         table_id_1: head.data.table_id,
                         partition_id_1: head.data.partition_id,
-                        sequencer_id_2: file.data.sequencer_id,
+                        shard_id_2: file.data.shard_id,
                         table_id_2: file.data.table_id,
                         partition_id_2: file.data.partition_id
                     }
@@ -764,7 +760,7 @@ impl Compactor {
             let meta = IoxMetadata {
                 object_store_id: Uuid::new_v4(),
                 creation_timestamp: self.time_provider.now(),
-                sequencer_id: iox_metadata.sequencer_id,
+                shard_id: iox_metadata.shard_id,
                 namespace_id: iox_metadata.namespace_id,
                 namespace_name: Arc::<str>::clone(&iox_metadata.namespace_name),
                 table_id: iox_metadata.table_id,
@@ -826,7 +822,7 @@ impl Compactor {
         let path = ParquetFilePath::new(
             metadata.namespace_id,
             metadata.table_id,
-            metadata.sequencer_id,
+            metadata.shard_id,
             metadata.partition_id,
             metadata.object_store_id,
         );
@@ -960,7 +956,7 @@ impl Compactor {
             .parquet_files()
             .count_by_overlaps(
                 tombstone.table_id,
-                tombstone.sequencer_id,
+                tombstone.shard_id,
                 tombstone.min_time,
                 tombstone.max_time,
                 tombstone.sequence_number,
@@ -970,9 +966,10 @@ impl Compactor {
             Ok(count_pf) => count_pf,
             _ => {
                 warn!(
-                    "Error getting parquet file count for table ID {}, sequencer ID {}, min time {:?}, max time {:?}.
+                    "Error getting parquet file count for table ID {}, shard ID {}, min time {:?}, \
+                    max time {:?}.
                     Won't be able to verify whether its tombstone is fully processed",
-                    tombstone.table_id, tombstone.sequencer_id, tombstone.min_time, tombstone.max_time
+                    tombstone.table_id, tombstone.shard_id, tombstone.min_time, tombstone.max_time
                 );
                 return false;
             }
@@ -1041,9 +1038,9 @@ impl Compactor {
             // in this group.
             let tombstones = tombstone_repo
                 .list_tombstones_for_time_range(
-                    // We've previously grouped the parquet files by sequence and table IDs, so
+                    // We've previously grouped the parquet files by shard and table IDs, so
                     // these values will be the same for all parquet files in the group.
-                    parquet_files[0].sequencer_id,
+                    parquet_files[0].shard_id,
                     parquet_files[0].table_id,
                     overall_min_max_sequence_number,
                     overall_min_time,
@@ -1087,8 +1084,8 @@ impl Compactor {
 /// Summary information for a partition that is a candidate for compaction.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct PartitionCompactionCandidate {
-    /// the sequencer the partition is in
-    pub sequencer_id: SequencerId,
+    /// the shard the partition is in
+    pub shard_id: ShardId,
     /// the table the partition is in
     pub table_id: TableId,
     /// the partition for compaction
@@ -1783,7 +1780,7 @@ mod tests {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         ParquetFileWithMetadata {
             id: ParquetFileId::new(id),
-            sequencer_id: SequencerId::new(0),
+            shard_id: ShardId::new(0),
             namespace_id: NamespaceId::new(0),
             table_id: TableId::new(0),
             partition_id: PartitionId::new(0),
@@ -2251,7 +2248,7 @@ mod tests {
             .unwrap();
 
         let p1 = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2426,14 +2423,14 @@ mod tests {
         );
 
         let table_id = TableId::new(3);
-        let sequencer_id = SequencerId::new(2);
+        let shard_id = ShardId::new(2);
 
         let meta = IoxMetadata {
             object_store_id: Uuid::new_v4(),
             creation_timestamp: compactor.time_provider.now(),
             namespace_id: NamespaceId::new(1),
             namespace_name: "mydata".into(),
-            sequencer_id,
+            shard_id,
             table_id,
             table_name: "temperature".into(),
             partition_id: PartitionId::new(4),
@@ -2464,7 +2461,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table_id,
-                sequencer_id,
+                shard_id,
                 SequenceNumber::new(1),
                 Timestamp::new(1),
                 Timestamp::new(1),
@@ -2580,7 +2577,7 @@ mod tests {
             creation_timestamp: compactor.time_provider.now(),
             namespace_id: NamespaceId::new(1),
             namespace_name: "mydata".into(),
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             table_id: table.id,
             table_name: "temperature".into(),
             partition_id: PartitionId::new(4),
@@ -2596,7 +2593,7 @@ mod tests {
 
         // Prepare metadata in form of ParquetFileParams to get added with tombstone
         let parquet = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2778,7 +2775,7 @@ mod tests {
             .unwrap();
 
         let p1 = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2839,7 +2836,7 @@ mod tests {
         let candidates = compactor.partitions_to_compact().await.unwrap();
         let expect: Vec<PartitionCompactionCandidate> = vec![
             PartitionCompactionCandidate {
-                sequencer_id: sequencer.id,
+                shard_id: sequencer.id,
                 table_id: table.id,
                 partition_id: partition.id,
                 level_0_file_count: 2,
@@ -2847,7 +2844,7 @@ mod tests {
                 oldest_file: pf1.created_at,
             },
             PartitionCompactionCandidate {
-                sequencer_id: sequencer.id,
+                shard_id: sequencer.id,
                 table_id: table.id,
                 partition_id: partition3.id,
                 level_0_file_count: 1,
@@ -2855,7 +2852,7 @@ mod tests {
                 oldest_file: pf4.created_at,
             },
             PartitionCompactionCandidate {
-                sequencer_id: sequencer.id,
+                shard_id: sequencer.id,
                 table_id: table.id,
                 partition_id: partition2.id,
                 level_0_file_count: 1,

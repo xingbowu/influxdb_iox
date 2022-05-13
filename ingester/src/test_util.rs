@@ -13,7 +13,7 @@ use arrow::record_batch::RecordBatch;
 use arrow_util::assert_batches_eq;
 use bitflags::bitflags;
 use data_types::{
-    KafkaPartition, NamespaceId, PartitionId, SequenceNumber, SequencerId, TableId, Timestamp,
+    KafkaPartition, NamespaceId, PartitionId, SequenceNumber, ShardId, TableId, Timestamp,
     Tombstone, TombstoneId,
 };
 use iox_catalog::{
@@ -58,7 +58,7 @@ pub async fn make_persisting_batch_with_meta() -> (Arc<PersistingBatch>, Vec<Tom
     let namespace_name = "test_namespace";
     let partition_key = "test_partition_key";
     let table_name = "test_table";
-    let seq_id = 1;
+    let shard_id = 1;
     let seq_num_start: i64 = 1;
     let seq_num_end: i64 = seq_num_start + 1; // 2 batches
     let namespace_id = 1;
@@ -69,7 +69,7 @@ pub async fn make_persisting_batch_with_meta() -> (Arc<PersistingBatch>, Vec<Tom
 
     // make the persisting batch
     let persisting_batch = make_persisting_batch(
-        seq_id,
+        shard_id,
         seq_num_start,
         table_id,
         table_name,
@@ -84,7 +84,7 @@ pub async fn make_persisting_batch_with_meta() -> (Arc<PersistingBatch>, Vec<Tom
     let meta = make_meta(
         uuid,
         time_provider.now(),
-        seq_id,
+        shard_id,
         namespace_id,
         namespace_name,
         table_id,
@@ -107,7 +107,7 @@ pub async fn make_persisting_batch_with_meta() -> (Arc<PersistingBatch>, Vec<Tom
 pub fn create_tombstone(
     id: i64,
     table_id: i64,
-    seq_id: i64,
+    shard_id: i64,
     seq_num: i64,
     min_time: i64,
     max_time: i64,
@@ -116,7 +116,7 @@ pub fn create_tombstone(
     Tombstone {
         id: TombstoneId::new(id),
         table_id: TableId::new(table_id),
-        sequencer_id: SequencerId::new(seq_id),
+        shard_id: ShardId::new(shard_id),
         sequence_number: SequenceNumber::new(seq_num),
         min_time: Timestamp::new(min_time),
         max_time: Timestamp::new(max_time),
@@ -128,7 +128,7 @@ pub fn create_tombstone(
 pub fn make_meta(
     object_store_id: Uuid,
     creation_timestamp: Time,
-    sequencer_id: i64,
+    shard_id: i64,
     namespace_id: i64,
     namespace_name: &str,
     table_id: i64,
@@ -146,7 +146,7 @@ pub fn make_meta(
     IoxMetadata {
         object_store_id,
         creation_timestamp,
-        sequencer_id: SequencerId::new(sequencer_id),
+        shard_id: ShardId::new(shard_id),
         namespace_id: NamespaceId::new(namespace_id),
         namespace_name: Arc::from(namespace_name),
         table_id: TableId::new(table_id),
@@ -165,7 +165,7 @@ pub fn make_meta(
 
 #[allow(clippy::too_many_arguments)]
 pub fn make_persisting_batch(
-    seq_id: i64,
+    shard_id: i64,
     seq_num_start: i64,
     table_id: i64,
     table_name: &str,
@@ -178,7 +178,7 @@ pub fn make_persisting_batch(
         make_queryable_batch_with_deletes(table_name, seq_num_start, batches, tombstones);
 
     Arc::new(PersistingBatch {
-        sequencer_id: SequencerId::new(seq_id),
+        shard_id: ShardId::new(shard_id),
         table_id: TableId::new(table_id),
         partition_id: PartitionId::new(partition_id),
         object_store_id,
@@ -679,13 +679,13 @@ pub fn make_ingester_data(two_partitions: bool, loc: DataLocation) -> IngesterDa
     let object_store = Arc::new(InMemory::new());
     let exec = Arc::new(query::exec::Executor::new(1));
 
-    // Make data for one sequencer/shard and two tables
-    let seq_id = SequencerId::new(1);
+    // Make data for one shard and two tables
+    let shard_id = ShardId::new(1);
     let empty_table_id = TableId::new(1);
     let data_table_id = TableId::new(2);
 
     // Make partitions per requested
-    let partitions = make_partitions(two_partitions, loc, seq_id, data_table_id, TEST_TABLE);
+    let partitions = make_partitions(two_partitions, loc, shard_id, data_table_id, TEST_TABLE);
 
     // Two tables: one empty and one with data of one or two partitions
     let mut tables = BTreeMap::new();
@@ -708,13 +708,13 @@ pub fn make_ingester_data(two_partitions: bool, loc: DataLocation) -> IngesterDa
     namespaces.insert(TEST_NAMESPACE_EMPTY.to_string(), empty_ns);
     namespaces.insert(TEST_NAMESPACE.to_string(), data_ns);
 
-    // One sequencer/shard that contains 2 namespaces
+    // One shard that contains 2 namespaces
     let kafka_partition = KafkaPartition::new(0);
     let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
     let mut sequencers = BTreeMap::new();
-    sequencers.insert(seq_id, seq_data);
+    sequencers.insert(shard_id, seq_data);
 
-    // Ingester data that inlcudes one sequencer/shard
+    // Ingester data that inlcudes one shard
     IngesterData::new(
         object_store,
         catalog,
@@ -732,13 +732,13 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
     let object_store = Arc::new(InMemory::new());
     let exec = Arc::new(query::exec::Executor::new(1));
 
-    // Make data for one sequencer/shard and two tables
-    let seq_id = SequencerId::new(1);
+    // Make data for one shard and two tables
+    let shard_id = ShardId::new(1);
     let data_table_id = TableId::new(2);
 
     // Make partitions per requested
     let partitions =
-        make_one_partition_with_tombstones(&exec, loc, seq_id, data_table_id, TEST_TABLE).await;
+        make_one_partition_with_tombstones(&exec, loc, shard_id, data_table_id, TEST_TABLE).await;
 
     // Two tables: one empty and one with data of one or two partitions
     let mut tables = BTreeMap::new();
@@ -757,7 +757,7 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
     let kafka_partition = KafkaPartition::new(0);
     let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
     let mut sequencers = BTreeMap::new();
-    sequencers.insert(seq_id, seq_data);
+    sequencers.insert(shard_id, seq_data);
 
     // Ingester data that inlcudes one sequencer/shard
     IngesterData::new(
@@ -774,7 +774,7 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
 pub(crate) fn make_partitions(
     two_partitions: bool,
     loc: DataLocation,
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     table_id: TableId,
     table_name: &str,
 ) -> BTreeMap<String, PartitionData> {
@@ -801,7 +801,7 @@ pub(crate) fn make_partitions(
     // Build the first partition
     let partition_id = PartitionId::new(1);
     let (mut p1, seq_num) =
-        make_first_partition_data(partition_id, loc, sequencer_id, table_id, table_name);
+        make_first_partition_data(partition_id, loc, shard_id, table_id, table_name);
 
     // ------------------------------------------
     // Build the second partition if asked
@@ -847,7 +847,7 @@ pub(crate) fn make_partitions(
 pub(crate) async fn make_one_partition_with_tombstones(
     exec: &query::exec::Executor,
     loc: DataLocation,
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     table_id: TableId,
     table_name: &str,
 ) -> BTreeMap<String, PartitionData> {
@@ -870,23 +870,24 @@ pub(crate) async fn make_one_partition_with_tombstones(
 
     let partition_id = PartitionId::new(1);
     let (mut p1, seq_num) =
-        make_first_partition_data(partition_id, loc, sequencer_id, table_id, table_name);
+        make_first_partition_data(partition_id, loc, shard_id, table_id, table_name);
 
     // Add tombtones
-    // Depending on where the existing data is, they (buffer & snapshot) will be either moved to a new sanpshot after
-    // appying the tombstone or (persisting) stay where they are and the tomstobes is kept to get applied later
+    // Depending on where the existing data is, they (buffer & snapshot) will be either moved to a
+    // new snapshot after applying the tombstone or (persisting) stay where they are and the
+    // tombstone is kept to get applied later
     // ------------------------------------------
     // Delete
     let mut seq_num = seq_num.get();
     seq_num += 1;
     let ts = create_tombstone(
-        2,                  // tombstone id
-        table_id.get(),     // table id
-        sequencer_id.get(), // sequencer id
-        seq_num,            // delete's seq_number
-        10,                 // min time of data to get deleted
-        50,                 // max time of data to get deleted
-        "city=Boston",      // delete predicate
+        2,              // tombstone id
+        table_id.get(), // table id
+        shard_id.get(), // shard id
+        seq_num,        // delete's seq_number
+        10,             // min time of data to get deleted
+        50,             // max time of data to get deleted
+        "city=Boston",  // delete predicate
     );
     p1.buffer_tombstone(exec, table_name, ts).await;
 
@@ -912,7 +913,7 @@ pub(crate) async fn make_one_partition_with_tombstones(
 fn make_first_partition_data(
     partition_id: PartitionId,
     loc: DataLocation,
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     table_id: TableId,
     table_name: &str,
 ) -> (PartitionData, SequenceNumber) {
@@ -952,7 +953,7 @@ fn make_first_partition_data(
 
     if loc.contains(DataLocation::PERSISTING) {
         // Move group 1 data to persisting
-        p1.snapshot_to_persisting_batch(sequencer_id, table_id, partition_id, table_name);
+        p1.snapshot_to_persisting_batch(shard_id, table_id, partition_id, table_name);
     } else if loc.contains(DataLocation::SNAPSHOT) {
         // move group 1 data to snapshot
         p1.snapshot().unwrap();

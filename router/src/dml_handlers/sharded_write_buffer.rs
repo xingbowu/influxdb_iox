@@ -119,7 +119,7 @@ where
 
             trace!(
                 %partition_key,
-                sequencer_id=%sequencer.id(),
+                shard_id=%sequencer.id(),
                 tables=%dml.table_count(),
                 %namespace,
                 approx_size=%dml.size(),
@@ -151,7 +151,7 @@ where
         );
 
         let iter = sequencers.into_iter().map(|s| {
-            trace!(sequencer_id=%s.id(), %table_name, %namespace, "routing delete to shard");
+            trace!(shard_id=%s.id(), %table_name, %namespace, "routing delete to shard");
 
             (s, DmlOperation::from(dml.clone()))
         });

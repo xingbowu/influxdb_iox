@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use backoff::{Backoff, BackoffConfig};
-use data_types::SequencerId;
+use data_types::ShardId;
 use futures::{
     future::{BoxFuture, Shared},
     select, FutureExt, TryFutureExt,
@@ -61,7 +61,7 @@ pub struct CompactorHandlerImpl {
 impl CompactorHandlerImpl {
     /// Initialize the Compactor
     pub fn new(
-        sequencers: Vec<SequencerId>,
+        sequencers: Vec<ShardId>,
         catalog: Arc<dyn Catalog>,
         object_store: Arc<DynObjectStore>,
         exec: Arc<Executor>,

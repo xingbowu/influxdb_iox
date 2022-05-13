@@ -84,7 +84,7 @@ impl catalog_service_server::CatalogService for CatalogService {
 fn to_parquet_file(p: data_types::ParquetFile) -> ParquetFile {
     ParquetFile {
         id: p.id.get(),
-        sequencer_id: p.sequencer_id.get(),
+        sequencer_id: p.shard_id.get(),
         namespace_id: p.namespace_id.get(),
         table_id: p.table_id.get(),
         partition_id: p.partition_id.get(),
@@ -105,7 +105,7 @@ fn to_parquet_file(p: data_types::ParquetFile) -> ParquetFile {
 fn to_partition(p: data_types::Partition) -> Partition {
     Partition {
         id: p.id.get(),
-        sequencer_id: p.sequencer_id.get(),
+        sequencer_id: p.shard_id.get(),
         key: p.partition_key,
         table_id: p.table_id.get(),
         sort_key: p.sort_key.unwrap_or_else(|| "".to_string()),
@@ -161,7 +161,7 @@ mod tests {
                 .await
                 .unwrap();
             let p1params = ParquetFileParams {
-                sequencer_id: sequencer.id,
+                shard_id: sequencer.id,
                 namespace_id: namespace.id,
                 table_id: table.id,
                 partition_id: partition.id,

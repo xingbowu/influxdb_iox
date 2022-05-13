@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use data_types::{
     Column, ColumnId, ColumnType, KafkaPartition, KafkaTopic, KafkaTopicId, Namespace, NamespaceId,
     ParquetFile, ParquetFileId, ParquetFileParams, ParquetFileWithMetadata, Partition, PartitionId,
-    PartitionInfo, ProcessedTombstone, QueryPool, QueryPoolId, SequenceNumber, Sequencer,
-    SequencerId, Table, TableId, TablePartition, Timestamp, Tombstone, TombstoneId,
+    PartitionInfo, ProcessedTombstone, QueryPool, QueryPoolId, SequenceNumber, Sequencer, ShardId,
+    Table, TableId, TablePartition, Timestamp, Tombstone, TombstoneId,
 };
 use iox_time::{SystemProvider, TimeProvider};
 use observability_deps::tracing::warn;
@@ -444,7 +444,7 @@ impl TableRepo for MemTxn {
 
     async fn get_table_persist_info(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         namespace_id: NamespaceId,
         table_name: &str,
     ) -> Result<Option<TablePersistInfo>> {
@@ -458,12 +458,12 @@ impl TableRepo for MemTxn {
             let tombstone_max_sequence_number = stage
                 .tombstones
                 .iter()
-                .filter(|t| t.sequencer_id == sequencer_id && t.table_id == table.id)
+                .filter(|t| t.shard_id == shard_id && t.table_id == table.id)
                 .max_by_key(|t| t.sequence_number)
                 .map(|t| t.sequence_number);
 
             return Ok(Some(TablePersistInfo {
-                sequencer_id,
+                shard_id,
                 table_id: table.id,
                 tombstone_max_sequence_number,
             }));
@@ -606,7 +606,7 @@ impl SequencerRepo for MemTxn {
             Some(t) => t,
             None => {
                 let sequencer = Sequencer {
-                    id: SequencerId::new(stage.sequencers.len() as i64 + 1),
+                    id: ShardId::new(stage.sequencers.len() as i64 + 1),
                     kafka_topic_id: topic.id,
                     kafka_partition: partition,
                     min_unpersisted_sequence_number: 0,
@@ -654,12 +654,12 @@ impl SequencerRepo for MemTxn {
 
     async fn update_min_unpersisted_sequence_number(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<()> {
         let stage = self.stage();
 
-        if let Some(s) = stage.sequencers.iter_mut().find(|s| s.id == sequencer_id) {
+        if let Some(s) = stage.sequencers.iter_mut().find(|s| s.id == shard_id) {
             s.min_unpersisted_sequence_number = sequence_number.get()
         };
 
@@ -672,27 +672,28 @@ impl PartitionRepo for MemTxn {
     async fn create_or_get(
         &mut self,
         key: &str,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
     ) -> Result<Partition> {
         let stage = self.stage();
 
-        let partition = match stage.partitions.iter().find(|p| {
-            p.partition_key == key && p.sequencer_id == sequencer_id && p.table_id == table_id
-        }) {
-            Some(p) => p,
-            None => {
-                let p = Partition {
-                    id: PartitionId::new(stage.partitions.len() as i64 + 1),
-                    sequencer_id,
-                    table_id,
-                    partition_key: key.to_string(),
-                    sort_key: None,
-                };
-                stage.partitions.push(p);
-                stage.partitions.last().unwrap()
-            }
-        };
+        let partition =
+            match stage.partitions.iter().find(|p| {
+                p.partition_key == key && p.shard_id == shard_id && p.table_id == table_id
+            }) {
+                Some(p) => p,
+                None => {
+                    let p = Partition {
+                        id: PartitionId::new(stage.partitions.len() as i64 + 1),
+                        shard_id,
+                        table_id,
+                        partition_key: key.to_string(),
+                        sort_key: None,
+                    };
+                    stage.partitions.push(p);
+                    stage.partitions.last().unwrap()
+                }
+            };
 
         Ok(partition.clone())
     }
@@ -707,13 +708,13 @@ impl PartitionRepo for MemTxn {
             .cloned())
     }
 
-    async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Partition>> {
+    async fn list_by_sequencer(&mut self, shard_id: ShardId) -> Result<Vec<Partition>> {
         let stage = self.stage();
 
         let partitions: Vec<_> = stage
             .partitions
             .iter()
-            .filter(|p| p.sequencer_id == sequencer_id)
+            .filter(|p| p.shard_id == shard_id)
             .cloned()
             .collect();
         Ok(partitions)
@@ -806,7 +807,7 @@ impl TombstoneRepo for MemTxn {
     async fn create_or_get(
         &mut self,
         table_id: TableId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
         min_time: Timestamp,
         max_time: Timestamp,
@@ -815,16 +816,14 @@ impl TombstoneRepo for MemTxn {
         let stage = self.stage();
 
         let tombstone = match stage.tombstones.iter().find(|t| {
-            t.table_id == table_id
-                && t.sequencer_id == sequencer_id
-                && t.sequence_number == sequence_number
+            t.table_id == table_id && t.shard_id == shard_id && t.sequence_number == sequence_number
         }) {
             Some(t) => t,
             None => {
                 let t = Tombstone {
                     id: TombstoneId::new(stage.tombstones.len() as i64 + 1),
                     table_id,
-                    sequencer_id,
+                    shard_id,
                     sequence_number,
                     min_time,
                     max_time,
@@ -875,7 +874,7 @@ impl TombstoneRepo for MemTxn {
 
     async fn list_tombstones_by_sequencer_greater_than(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<Vec<Tombstone>> {
         let stage = self.stage();
@@ -883,7 +882,7 @@ impl TombstoneRepo for MemTxn {
         let tombstones: Vec<_> = stage
             .tombstones
             .iter()
-            .filter(|t| t.sequencer_id == sequencer_id && t.sequence_number > sequence_number)
+            .filter(|t| t.shard_id == shard_id && t.sequence_number > sequence_number)
             .cloned()
             .collect();
         Ok(tombstones)
@@ -907,7 +906,7 @@ impl TombstoneRepo for MemTxn {
 
     async fn list_tombstones_for_time_range(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
         sequence_number: SequenceNumber,
         min_time: Timestamp,
@@ -919,7 +918,7 @@ impl TombstoneRepo for MemTxn {
             .tombstones
             .iter()
             .filter(|t| {
-                t.sequencer_id == sequencer_id
+                t.shard_id == shard_id
                     && t.table_id == table_id
                     && t.sequence_number > sequence_number
                     && ((t.min_time <= min_time && t.max_time >= min_time)
@@ -937,7 +936,7 @@ impl ParquetFileRepo for MemTxn {
         let stage = self.stage();
 
         let ParquetFileParams {
-            sequencer_id,
+            shard_id,
             namespace_id,
             table_id,
             partition_id,
@@ -963,7 +962,7 @@ impl ParquetFileRepo for MemTxn {
 
         let parquet_file = ParquetFile {
             id: ParquetFileId::new(stage.parquet_files.len() as i64 + 1),
-            sequencer_id,
+            shard_id,
             namespace_id,
             table_id,
             partition_id,
@@ -1001,7 +1000,7 @@ impl ParquetFileRepo for MemTxn {
 
     async fn list_by_sequencer_greater_than(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<Vec<ParquetFile>> {
         let stage = self.stage();
@@ -1009,7 +1008,7 @@ impl ParquetFileRepo for MemTxn {
         let files: Vec<_> = stage
             .parquet_files
             .iter()
-            .filter(|f| f.sequencer_id == sequencer_id && f.max_sequence_number > sequence_number)
+            .filter(|f| f.shard_id == shard_id && f.max_sequence_number > sequence_number)
             .cloned()
             .collect();
         Ok(files)
@@ -1088,15 +1087,13 @@ impl ParquetFileRepo for MemTxn {
         Ok(delete)
     }
 
-    async fn level_0(&mut self, sequencer_id: SequencerId) -> Result<Vec<ParquetFile>> {
+    async fn level_0(&mut self, shard_id: ShardId) -> Result<Vec<ParquetFile>> {
         let stage = self.stage();
 
         Ok(stage
             .parquet_files
             .iter()
-            .filter(|f| {
-                f.sequencer_id == sequencer_id && f.compaction_level == 0 && f.to_delete.is_none()
-            })
+            .filter(|f| f.shard_id == shard_id && f.compaction_level == 0 && f.to_delete.is_none())
             .cloned()
             .collect())
     }
@@ -1113,7 +1110,7 @@ impl ParquetFileRepo for MemTxn {
             .parquet_files
             .iter()
             .filter(|f| {
-                f.sequencer_id == table_partition.sequencer_id
+                f.shard_id == table_partition.shard_id
                     && f.table_id == table_partition.table_id
                     && f.partition_id == table_partition.partition_id
                     && f.compaction_level == 1
@@ -1213,7 +1210,7 @@ impl ParquetFileRepo for MemTxn {
     async fn count_by_overlaps(
         &mut self,
         table_id: TableId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         min_time: Timestamp,
         max_time: Timestamp,
         sequence_number: SequenceNumber,
@@ -1224,7 +1221,7 @@ impl ParquetFileRepo for MemTxn {
             .parquet_files
             .iter()
             .filter(|f| {
-                f.sequencer_id == sequencer_id
+                f.shard_id == shard_id
                     && f.table_id == table_id
                     && f.min_sequence_number < sequence_number
                     && f.to_delete.is_none()

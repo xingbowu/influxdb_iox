@@ -5,8 +5,8 @@ use data_types::{
     Column, ColumnSchema, ColumnType, KafkaPartition, KafkaTopic, KafkaTopicId, Namespace,
     NamespaceId, NamespaceSchema, ParquetFile, ParquetFileId, ParquetFileParams,
     ParquetFileWithMetadata, Partition, PartitionId, PartitionInfo, ProcessedTombstone, QueryPool,
-    QueryPoolId, SequenceNumber, Sequencer, SequencerId, Table, TableId, TablePartition,
-    TableSchema, Timestamp, Tombstone, TombstoneId,
+    QueryPoolId, SequenceNumber, Sequencer, ShardId, Table, TableId, TablePartition, TableSchema,
+    Timestamp, Tombstone, TombstoneId,
 };
 use iox_time::TimeProvider;
 use snafu::{OptionExt, Snafu};
@@ -308,7 +308,7 @@ pub trait TableRepo: Send + Sync {
     /// Gets the table persistence info for the given sequencer
     async fn get_table_persist_info(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         namespace_id: NamespaceId,
         table_name: &str,
     ) -> Result<Option<TablePersistInfo>>;
@@ -317,9 +317,8 @@ pub trait TableRepo: Send + Sync {
 /// Information for a table's persistence information for a specific sequencer from the catalog
 #[derive(Debug, Copy, Clone, Eq, PartialEq, sqlx::FromRow)]
 pub struct TablePersistInfo {
-    /// sequencer the sequence numbers are associated with
-    #[sqlx(rename = "shard_id")]
-    pub sequencer_id: SequencerId,
+    /// shard the sequence numbers are associated with
+    pub shard_id: ShardId,
     /// the global identifier for the table
     pub table_id: TableId,
     /// max sequence number from this table's tombstones for this sequencer
@@ -394,7 +393,7 @@ pub trait SequencerRepo: Send + Sync {
     /// updates the `min_unpersisted_sequence_number` for a sequencer
     async fn update_min_unpersisted_sequence_number(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<()>;
 }
@@ -407,7 +406,7 @@ pub trait PartitionRepo: Send + Sync {
     async fn create_or_get(
         &mut self,
         key: &str,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
     ) -> Result<Partition>;
 
@@ -415,7 +414,7 @@ pub trait PartitionRepo: Send + Sync {
     async fn get_by_id(&mut self, partition_id: PartitionId) -> Result<Option<Partition>>;
 
     /// return partitions for a given sequencer
-    async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Partition>>;
+    async fn list_by_sequencer(&mut self, shard_id: ShardId) -> Result<Vec<Partition>>;
 
     /// return partitions for a given namespace
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Partition>>;
@@ -445,7 +444,7 @@ pub trait TombstoneRepo: Send + Sync {
     async fn create_or_get(
         &mut self,
         table_id: TableId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
         min_time: Timestamp,
         max_time: Timestamp,
@@ -466,7 +465,7 @@ pub trait TombstoneRepo: Send + Sync {
     /// might have to be applied to data that is read from the write buffer.
     async fn list_tombstones_by_sequencer_greater_than(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<Vec<Tombstone>>;
 
@@ -475,14 +474,14 @@ pub trait TombstoneRepo: Send + Sync {
 
     /// Return all tombstones that have:
     ///
-    /// - the specified sequencer ID and table ID
+    /// - the specified shard ID and table ID
     /// - a sequence number greater than the specified sequence number
     /// - a time period that overlaps with the specified time period
     ///
     /// Used during compaction.
     async fn list_tombstones_for_time_range(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         table_id: TableId,
         sequence_number: SequenceNumber,
         min_time: Timestamp,
@@ -508,7 +507,7 @@ pub trait ParquetFileRepo: Send + Sync {
     /// these partitions on replay.
     async fn list_by_sequencer_greater_than(
         &mut self,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         sequence_number: SequenceNumber,
     ) -> Result<Vec<ParquetFile>>;
 
@@ -536,7 +535,7 @@ pub trait ParquetFileRepo: Send + Sync {
 
     /// List parquet files for a given sequencer with compaction level 0 and other criteria that
     /// define a file as a candidate for compaction
-    async fn level_0(&mut self, sequencer_id: SequencerId) -> Result<Vec<ParquetFile>>;
+    async fn level_0(&mut self, shard_id: ShardId) -> Result<Vec<ParquetFile>>;
 
     /// List parquet files for a given table partition, in a given time range, with compaction
     /// level 1, and other criteria that define a file as a candidate for compaction with a level 0
@@ -578,13 +577,13 @@ pub trait ParquetFileRepo: Send + Sync {
     /// Return count
     async fn count(&mut self) -> Result<i64>;
 
-    /// Return count of files of given tableId and sequenceId that
+    /// Return count of files of given tableId and ShardId that
     /// overlap with the given min_time and max_time and have sequencer number
     /// smaller the given one
     async fn count_by_overlaps(
         &mut self,
         table_id: TableId,
-        sequencer_id: SequencerId,
+        shard_id: ShardId,
         min_time: Timestamp,
         max_time: Timestamp,
         sequence_number: SequenceNumber,
@@ -1049,7 +1048,7 @@ pub(crate) mod test_helpers {
         assert_eq!(
             ti,
             TablePersistInfo {
-                sequencer_id: seq.id,
+                shard_id: seq.id,
                 table_id: t.id,
                 tombstone_max_sequence_number: None
             }
@@ -1077,7 +1076,7 @@ pub(crate) mod test_helpers {
         assert_eq!(
             ti,
             TablePersistInfo {
-                sequencer_id: seq.id,
+                shard_id: seq.id,
                 table_id: t.id,
                 tombstone_max_sequence_number: Some(tombstone.sequence_number),
             }
@@ -1481,7 +1480,7 @@ pub(crate) mod test_helpers {
             .await
             .unwrap();
         assert!(t1.id > TombstoneId::new(0));
-        assert_eq!(t1.sequencer_id, sequencer.id);
+        assert_eq!(t1.shard_id, sequencer.id);
         assert_eq!(t1.sequence_number, SequenceNumber::new(1));
         assert_eq!(t1.min_time, min_time);
         assert_eq!(t1.max_time, max_time);
@@ -1649,7 +1648,7 @@ pub(crate) mod test_helpers {
         let max_sequence_number = SequenceNumber::new(140);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -1860,7 +1859,7 @@ pub(crate) mod test_helpers {
             .unwrap();
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2220,7 +2219,7 @@ pub(crate) mod test_helpers {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2244,7 +2243,7 @@ pub(crate) mod test_helpers {
 
         // Create a compaction level 0 file for some other sequencer
         let other_sequencer_params = ParquetFileParams {
-            sequencer_id: other_sequencer.id,
+            shard_id: other_sequencer.id,
             object_store_id: Uuid::new_v4(),
             ..parquet_file_params.clone()
         };
@@ -2350,7 +2349,7 @@ pub(crate) mod test_helpers {
 
         // Create a file with times entirely within the window
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2428,7 +2427,7 @@ pub(crate) mod test_helpers {
 
         // Create a file for some other sequencer
         let other_sequencer_params = ParquetFileParams {
-            sequencer_id: other_sequencer.id,
+            shard_id: other_sequencer.id,
             object_store_id: Uuid::new_v4(),
             ..parquet_file_params.clone()
         };
@@ -2556,7 +2555,7 @@ pub(crate) mod test_helpers {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2675,7 +2674,7 @@ pub(crate) mod test_helpers {
 
         // Create a file with times entirely within the window
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2793,7 +2792,7 @@ pub(crate) mod test_helpers {
         // parquet files
         let parquet_file_params = ParquetFileParams {
             namespace_id: namespace.id,
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             table_id: partition.table_id,
             partition_id: partition.id,
             object_store_id: Uuid::new_v4(),

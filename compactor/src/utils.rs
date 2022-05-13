@@ -102,7 +102,7 @@ impl ParquetFileWithTombstone {
 
         trace!(
             parquet_file_id=?decoded_parquet_file.parquet_file.id,
-            parquet_file_sequencer_id=?decoded_parquet_file.parquet_file.sequencer_id,
+            parquet_file_shard_id=?decoded_parquet_file.parquet_file.shard_id,
             parquet_file_namespace_id=?decoded_parquet_file.parquet_file.namespace_id,
             parquet_file_table_id=?decoded_parquet_file.parquet_file.table_id,
             parquet_file_partition_id=?decoded_parquet_file.parquet_file.partition_id,

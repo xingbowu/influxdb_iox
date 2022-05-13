@@ -310,7 +310,7 @@ pub fn new_parquet_chunk(
     let path = ParquetFilePath::new(
         iox_metadata.namespace_id,
         iox_metadata.table_id,
-        iox_metadata.sequencer_id,
+        iox_metadata.shard_id,
         iox_metadata.partition_id,
         iox_metadata.object_store_id,
     );

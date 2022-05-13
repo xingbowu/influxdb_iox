@@ -88,7 +88,7 @@
 //! [Thrift Compact Protocol]: https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md
 use data_types::{
     ColumnSummary, InfluxDbType, NamespaceId, ParquetFileParams, PartitionId, SequenceNumber,
-    SequencerId, StatValues, Statistics, TableId, Timestamp,
+    ShardId, StatValues, Statistics, TableId, Timestamp,
 };
 use generated_types::influxdata::iox::ingester::v1 as proto;
 use iox_time::Time;
@@ -247,8 +247,8 @@ pub struct IoxMetadata {
     /// namespace name of the data
     pub namespace_name: Arc<str>,
 
-    /// sequencer id of the data
-    pub sequencer_id: SequencerId,
+    /// shard id of the data
+    pub shard_id: ShardId,
 
     /// table id of the data
     pub table_id: TableId,
@@ -305,7 +305,7 @@ impl IoxMetadata {
             creation_timestamp: Some(self.creation_timestamp.date_time().into()),
             namespace_id: self.namespace_id.get(),
             namespace_name: self.namespace_name.to_string(),
-            sequencer_id: self.sequencer_id.get(),
+            sequencer_id: self.shard_id.get(),
             table_id: self.table_id.get(),
             table_name: self.table_name.to_string(),
             partition_id: self.partition_id.get(),
@@ -365,7 +365,7 @@ impl IoxMetadata {
             creation_timestamp,
             namespace_id: NamespaceId::new(proto_msg.namespace_id),
             namespace_name,
-            sequencer_id: SequencerId::new(proto_msg.sequencer_id),
+            shard_id: ShardId::new(proto_msg.sequencer_id),
             table_id: TableId::new(proto_msg.table_id),
             table_name,
             partition_id: PartitionId::new(proto_msg.partition_id),
@@ -392,7 +392,7 @@ impl IoxMetadata {
         metadata: &IoxParquetMetaData,
     ) -> ParquetFileParams {
         ParquetFileParams {
-            sequencer_id: self.sequencer_id,
+            shard_id: self.shard_id,
             namespace_id: self.namespace_id,
             table_id: self.table_id,
             partition_id: self.partition_id,
@@ -854,7 +854,7 @@ mod tests {
             creation_timestamp: Time::from_timestamp(3234, 0),
             namespace_id: NamespaceId::new(2),
             namespace_name: Arc::from("hi"),
-            sequencer_id: SequencerId::new(1),
+            shard_id: ShardId::new(1),
             table_id: TableId::new(3),
             table_name: Arc::from("weather"),
             partition_id: PartitionId::new(4),

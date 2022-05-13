@@ -2,7 +2,7 @@
 
 use backoff::{Backoff, BackoffConfig};
 use cache_system::{driver::Cache, loader::FunctionLoader};
-use data_types::{PartitionId, SequencerId};
+use data_types::{PartitionId, ShardId};
 use iox_catalog::interface::Catalog;
 use schema::sort::SortKey;
 use std::{collections::HashMap, sync::Arc};
@@ -35,7 +35,7 @@ impl PartitionCache {
                     .expect("partition gone from catalog?!");
 
                 CachedPartition {
-                    sequencer_id: partition.sequencer_id,
+                    shard_id: partition.shard_id,
                     sort_key: partition.sort_key(),
                 }
             }
@@ -47,9 +47,9 @@ impl PartitionCache {
         }
     }
 
-    /// Get sequencer ID.
-    pub async fn sequencer_id(&self, partition_id: PartitionId) -> SequencerId {
-        self.cache.get(partition_id).await.sequencer_id
+    /// Get shard ID.
+    pub async fn shard_id(&self, partition_id: PartitionId) -> ShardId {
+        self.cache.get(partition_id).await.shard_id
     }
 
     /// Get sort key
@@ -60,7 +60,7 @@ impl PartitionCache {
 
 #[derive(Debug, Clone)]
 struct CachedPartition {
-    sequencer_id: SequencerId,
+    shard_id: ShardId,
     sort_key: Option<SortKey>,
 }
 
@@ -71,7 +71,7 @@ mod tests {
     use iox_tests::util::TestCatalog;
 
     #[tokio::test]
-    async fn test_sequencer_id() {
+    async fn test_shard_id() {
         let catalog = TestCatalog::new();
 
         let ns = catalog.create_namespace("ns").await;
@@ -93,15 +93,15 @@ mod tests {
 
         let cache = PartitionCache::new(catalog.catalog(), BackoffConfig::default());
 
-        let id1 = cache.sequencer_id(p1.id).await;
+        let id1 = cache.shard_id(p1.id).await;
         assert_eq!(id1, s1.sequencer.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 1);
 
-        let id2 = cache.sequencer_id(p2.id).await;
+        let id2 = cache.shard_id(p2.id).await;
         assert_eq!(id2, s2.sequencer.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 2);
 
-        let id1 = cache.sequencer_id(p1.id).await;
+        let id1 = cache.shard_id(p1.id).await;
         assert_eq!(id1, s1.sequencer.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 2);
     }
@@ -171,16 +171,16 @@ mod tests {
 
         let cache = PartitionCache::new(catalog.catalog(), BackoffConfig::default());
 
-        cache.sequencer_id(p2.id).await;
+        cache.shard_id(p2.id).await;
         cache.sort_key(p3.id).await;
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 2);
 
-        cache.sequencer_id(p1.id).await;
+        cache.shard_id(p1.id).await;
         cache.sort_key(p2.id).await;
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 3);
 
         cache.sort_key(p1.id).await;
-        cache.sequencer_id(p2.id).await;
+        cache.shard_id(p2.id).await;
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 3);
     }
 }

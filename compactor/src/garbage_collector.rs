@@ -68,7 +68,7 @@ impl GarbageCollector {
             let path = ParquetFilePath::new(
                 catalog_record.namespace_id,
                 catalog_record.table_id,
-                catalog_record.sequencer_id,
+                catalog_record.shard_id,
                 catalog_record.partition_id,
                 catalog_record.object_store_id,
             );
@@ -112,7 +112,7 @@ mod tests {
         let path = ParquetFilePath::new(
             catalog_record.namespace_id,
             catalog_record.table_id,
-            catalog_record.sequencer_id,
+            catalog_record.shard_id,
             catalog_record.partition_id,
             catalog_record.object_store_id,
         );
@@ -172,7 +172,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -254,7 +254,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -340,7 +340,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            sequencer_id: sequencer.id,
+            shard_id: sequencer.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,

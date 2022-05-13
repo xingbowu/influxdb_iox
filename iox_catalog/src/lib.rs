@@ -13,7 +13,7 @@
 
 use crate::interface::{ColumnUpsertRequest, Error, RepoCollection, Result, Transaction};
 use data_types::{
-    ColumnType, KafkaPartition, KafkaTopic, NamespaceSchema, QueryPool, Sequencer, SequencerId,
+    ColumnType, KafkaPartition, KafkaTopic, NamespaceSchema, QueryPool, Sequencer, ShardId,
     TableSchema,
 };
 use mutable_batch::MutableBatch;
@@ -175,7 +175,7 @@ where
 pub async fn create_or_get_default_records(
     kafka_partition_count: i32,
     txn: &mut dyn Transaction,
-) -> Result<(KafkaTopic, QueryPool, BTreeMap<SequencerId, Sequencer>)> {
+) -> Result<(KafkaTopic, QueryPool, BTreeMap<ShardId, Sequencer>)> {
     let kafka_topic = txn.kafka_topics().create_or_get(SHARED_KAFKA_TOPIC).await?;
     let query_pool = txn.query_pools().create_or_get(SHARED_QUERY_POOL).await?;
 
