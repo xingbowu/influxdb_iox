@@ -552,7 +552,7 @@ mod tests {
             partition_mapping,
             vec![ParquetFile {
                 id: 98,
-                sequencer_id: 100,
+                shard_id: 100,
                 namespace_id: 100,
                 table_id: 100,
                 partition_id: 100,
@@ -571,7 +571,7 @@ mod tests {
         .await
         .unwrap();
 
-        // the inserted parquet file should have sequencer, namespace, table, and partition ids
+        // the inserted parquet file should have shard, namespace, table, and partition ids
         // that match with the ones in the catalog, not the remote. The other values should
         // match those of the remote.
         let expected = vec![CatalogParquetFile {
