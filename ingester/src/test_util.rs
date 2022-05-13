@@ -4,7 +4,7 @@
 
 use crate::{
     data::{
-        IngesterData, NamespaceData, PartitionData, PersistingBatch, QueryableBatch, SequencerData,
+        IngesterData, NamespaceData, PartitionData, PersistingBatch, QueryableBatch, ShardData,
         SnapshotBatch, TableData,
     },
     partioning::DefaultPartitioner,
@@ -710,15 +710,15 @@ pub fn make_ingester_data(two_partitions: bool, loc: DataLocation) -> IngesterDa
 
     // One shard that contains 2 namespaces
     let kafka_partition = KafkaPartition::new(0);
-    let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
-    let mut sequencers = BTreeMap::new();
-    sequencers.insert(shard_id, seq_data);
+    let shard_data = ShardData::new_for_test(kafka_partition, namespaces);
+    let mut shards = BTreeMap::new();
+    shards.insert(shard_id, shard_data);
 
     // Ingester data that inlcudes one shard
     IngesterData::new(
         object_store,
         catalog,
-        sequencers,
+        shards,
         Arc::new(DefaultPartitioner::default()),
         exec,
         backoff::BackoffConfig::default(),
@@ -753,17 +753,17 @@ pub async fn make_ingester_data_with_tombstones(loc: DataLocation) -> IngesterDa
     let data_ns = Arc::new(NamespaceData::new_for_test(NamespaceId::new(2), tables));
     namespaces.insert(TEST_NAMESPACE.to_string(), data_ns);
 
-    // One sequencer/shard that contains 1 namespace
+    // One shard that contains 1 namespace
     let kafka_partition = KafkaPartition::new(0);
-    let seq_data = SequencerData::new_for_test(kafka_partition, namespaces);
-    let mut sequencers = BTreeMap::new();
-    sequencers.insert(shard_id, seq_data);
+    let shard_data = ShardData::new_for_test(kafka_partition, namespaces);
+    let mut shards = BTreeMap::new();
+    shards.insert(shard_id, shard_data);
 
-    // Ingester data that inlcudes one sequencer/shard
+    // Ingester data that includes one shard
     IngesterData::new(
         object_store,
         catalog,
-        sequencers,
+        shards,
         Arc::new(DefaultPartitioner::default()),
         exec,
         backoff::BackoffConfig::default(),

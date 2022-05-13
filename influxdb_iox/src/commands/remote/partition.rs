@@ -224,9 +224,9 @@ async fn load_schema(
     let mut repos = catalog.repositories().await;
     let kafka_topic = repos.kafka_topics().create_or_get(KAFKA_NAME).await?;
     let query_pool = repos.query_pools().create_or_get(QUERY_POOL).await?;
-    // ensure there's a sequencer for this partition so it can be used later
-    let _sequencer = repos
-        .sequencers()
+    // ensure there's a shard for this partition so it can be used later
+    let _shard = repos
+        .shards()
         .create_or_get(&kafka_topic, KafkaPartition::new(KAFKA_PARTITION))
         .await?;
 
@@ -292,22 +292,22 @@ async fn load_partition(
         .get_by_name(KAFKA_NAME)
         .await?
         .expect("topic should have been inserted earlier");
-    let sequencer = repos
-        .sequencers()
+    let shard = repos
+        .shards()
         .get_by_topic_id_and_partition(topic.id, KafkaPartition::new(KAFKA_PARTITION))
         .await?
-        .expect("sequencer should have been inserted earlier");
+        .expect("shard should have been inserted earlier");
     let table = schema
         .tables
         .get(table_name)
         .expect("table should have been loaded");
     let partition = repos
         .partitions()
-        .create_or_get(&remote_partition.key, sequencer.id, table.id)
+        .create_or_get(&remote_partition.key, shard.id, table.id)
         .await?;
 
     Ok(PartitionMapping {
-        shard_id: sequencer.id,
+        shard_id: shard.id,
         table_id: table.id,
         partition_id: partition.id,
         remote_partition_id: remote_partition.id,
@@ -495,7 +495,7 @@ mod tests {
     async fn load_parquet_files() {
         let metrics = Arc::new(metric::Registry::new());
         let catalog: Arc<dyn Catalog> = Arc::new(MemCatalog::new(Arc::clone(&metrics)));
-        let sequencer;
+        let shard;
         let namespace;
         let table;
         let partition;
@@ -508,8 +508,8 @@ mod tests {
                 .await
                 .unwrap();
             let query_pool = repos.query_pools().create_or_get(QUERY_POOL).await.unwrap();
-            sequencer = repos
-                .sequencers()
+            shard = repos
+                .shards()
                 .create_or_get(&kafka_topic, KafkaPartition::new(KAFKA_PARTITION))
                 .await
                 .unwrap();
@@ -525,13 +525,13 @@ mod tests {
                 .unwrap();
             partition = repos
                 .partitions()
-                .create_or_get("1970-01-01", sequencer.id, table.id)
+                .create_or_get("1970-01-01", shard.id, table.id)
                 .await
                 .unwrap();
         }
 
         let partition_mapping = PartitionMapping {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             table_id: table.id,
             partition_id: partition.id,
             remote_partition_id: 4,
@@ -576,7 +576,7 @@ mod tests {
         // match those of the remote.
         let expected = vec![CatalogParquetFile {
             id: ParquetFileId::new(1),
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,

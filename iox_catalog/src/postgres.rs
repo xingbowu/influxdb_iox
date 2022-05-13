@@ -4,7 +4,7 @@ use crate::{
     interface::{
         sealed::TransactionFinalize, Catalog, ColumnRepo, ColumnUpsertRequest, Error,
         KafkaTopicRepo, NamespaceRepo, ParquetFileRepo, PartitionRepo, ProcessedTombstoneRepo,
-        QueryPoolRepo, RepoCollection, Result, SequencerRepo, TablePersistInfo, TableRepo,
+        QueryPoolRepo, RepoCollection, Result, ShardRepo, TablePersistInfo, TableRepo,
         TombstoneRepo, Transaction,
     },
     metrics::MetricDecorator,
@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use data_types::{
     Column, ColumnType, KafkaPartition, KafkaTopic, KafkaTopicId, Namespace, NamespaceId,
     ParquetFile, ParquetFileId, ParquetFileParams, ParquetFileWithMetadata, Partition, PartitionId,
-    PartitionInfo, ProcessedTombstone, QueryPool, QueryPoolId, SequenceNumber, Sequencer, ShardId,
+    PartitionInfo, ProcessedTombstone, QueryPool, QueryPoolId, SequenceNumber, Shard, ShardId,
     Table, TableId, TablePartition, Timestamp, Tombstone, TombstoneId,
 };
 use iox_time::{SystemProvider, TimeProvider};
@@ -480,7 +480,7 @@ impl RepoCollection for PostgresTxn {
         self
     }
 
-    fn sequencers(&mut self) -> &mut dyn SequencerRepo {
+    fn shards(&mut self) -> &mut dyn ShardRepo {
         self
     }
 
@@ -996,13 +996,13 @@ RETURNING *;
 }
 
 #[async_trait]
-impl SequencerRepo for PostgresTxn {
+impl ShardRepo for PostgresTxn {
     async fn create_or_get(
         &mut self,
         topic: &KafkaTopic,
         partition: KafkaPartition,
-    ) -> Result<Sequencer> {
-        sqlx::query_as::<_, Sequencer>(
+    ) -> Result<Shard> {
+        sqlx::query_as::<_, Shard>(
             r#"
 INSERT INTO shard
     ( kafka_topic_id, kafka_partition, min_unpersisted_sequence_number )
@@ -1030,8 +1030,8 @@ RETURNING *;;
         &mut self,
         topic_id: KafkaTopicId,
         partition: KafkaPartition,
-    ) -> Result<Option<Sequencer>> {
-        let rec = sqlx::query_as::<_, Sequencer>(
+    ) -> Result<Option<Shard>> {
+        let rec = sqlx::query_as::<_, Shard>(
             r#"
 SELECT *
 FROM shard
@@ -1048,20 +1048,20 @@ WHERE kafka_topic_id = $1
             return Ok(None);
         }
 
-        let sequencer = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let shard = rec.map_err(|e| Error::SqlxError { source: e })?;
 
-        Ok(Some(sequencer))
+        Ok(Some(shard))
     }
 
-    async fn list(&mut self) -> Result<Vec<Sequencer>> {
-        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM shard;"#)
+    async fn list(&mut self) -> Result<Vec<Shard>> {
+        sqlx::query_as::<_, Shard>(r#"SELECT * FROM shard;"#)
             .fetch_all(&mut self.inner)
             .await
             .map_err(|e| Error::SqlxError { source: e })
     }
 
-    async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Sequencer>> {
-        sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM shard WHERE kafka_topic_id = $1;"#)
+    async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Shard>> {
+        sqlx::query_as::<_, Shard>(r#"SELECT * FROM shard WHERE kafka_topic_id = $1;"#)
             .bind(&topic.id) // $1
             .fetch_all(&mut self.inner)
             .await
@@ -1144,7 +1144,7 @@ RETURNING *;
         Ok(Some(partition))
     }
 
-    async fn list_by_sequencer(&mut self, shard_id: ShardId) -> Result<Vec<Partition>> {
+    async fn list_by_shard(&mut self, shard_id: ShardId) -> Result<Vec<Partition>> {
         sqlx::query_as::<_, Partition>(r#"SELECT * FROM partition WHERE shard_id = $1;"#)
             .bind(&shard_id) // $1
             .fetch_all(&mut self.inner)
@@ -1361,7 +1361,7 @@ WHERE id = $1;
         Ok(Some(tombstone))
     }
 
-    async fn list_tombstones_by_sequencer_greater_than(
+    async fn list_tombstones_by_shard_greater_than(
         &mut self,
         shard_id: ShardId,
         sequence_number: SequenceNumber,
@@ -1517,7 +1517,7 @@ RETURNING *;
         Ok(())
     }
 
-    async fn list_by_sequencer_greater_than(
+    async fn list_by_shard_greater_than(
         &mut self,
         shard_id: ShardId,
         sequence_number: SequenceNumber,
@@ -2096,7 +2096,7 @@ mod tests {
         let postgres: Arc<dyn Catalog> = Arc::new(postgres);
 
         let mut txn = postgres.start_transaction().await.expect("txn start");
-        let (kafka, query, sequencers) = create_or_get_default_records(1, txn.deref_mut())
+        let (kafka, query, shards) = create_or_get_default_records(1, txn.deref_mut())
             .await
             .expect("db init failed");
         txn.commit().await.expect("txn commit");
@@ -2118,7 +2118,7 @@ mod tests {
             .expect("create table failed")
             .id;
 
-        let shard_id = *sequencers.keys().next().expect("no sequencer");
+        let shard_id = *shards.keys().next().expect("no shard");
         let sequence_number = SequenceNumber::new(3);
         let min_timestamp = Timestamp::new(10);
         let max_timestamp = Timestamp::new(100);
@@ -2172,7 +2172,7 @@ mod tests {
         let postgres: Arc<dyn Catalog> = Arc::new(postgres);
 
         let mut txn = postgres.start_transaction().await.expect("txn start");
-        let (kafka, query, sequencers) = create_or_get_default_records(1, txn.deref_mut())
+        let (kafka, query, shards) = create_or_get_default_records(1, txn.deref_mut())
             .await
             .expect("db init failed");
         txn.commit().await.expect("txn commit");
@@ -2194,7 +2194,7 @@ mod tests {
             .expect("create table failed")
             .id;
 
-        let shard_id = *sequencers.keys().next().expect("no sequencer");
+        let shard_id = *shards.keys().next().expect("no shard");
         let sequence_number = SequenceNumber::new(3);
         let min_timestamp = Timestamp::new(10);
         let max_timestamp = Timestamp::new(100);
@@ -2248,7 +2248,7 @@ mod tests {
 
         let postgres: Arc<dyn Catalog> = Arc::new(postgres);
         let mut txn = postgres.start_transaction().await.expect("txn start");
-        let (kafka, query, sequencers) = create_or_get_default_records(1, txn.deref_mut())
+        let (kafka, query, shards) = create_or_get_default_records(1, txn.deref_mut())
             .await
             .expect("db init failed");
         txn.commit().await.expect("txn commit");
@@ -2271,7 +2271,7 @@ mod tests {
             .id;
 
         let key = "bananas";
-        let shard_id = *sequencers.keys().next().expect("no sequencer");
+        let shard_id = *shards.keys().next().expect("no shard");
 
         let a = postgres
             .repositories()
@@ -2331,34 +2331,34 @@ mod tests {
 
         let key = "bananas";
 
-        let sequencers = postgres
+        let shards = postgres
             .repositories()
             .await
-            .sequencers()
+            .shards()
             .list()
             .await
-            .expect("failed to list sequencers");
+            .expect("failed to list shards");
         assert!(
-            sequencers.len() > 1,
-            "expected more sequencers to be created, got {}",
-            sequencers.len()
+            shards.len() > 1,
+            "expected more shards to be created, got {}",
+            shards.len()
         );
 
         let a = postgres
             .repositories()
             .await
             .partitions()
-            .create_or_get(key, sequencers[0].id, table_id)
+            .create_or_get(key, shards[0].id, table_id)
             .await
             .expect("should create OK");
 
         // Call create_or_get for the same (key, table_id) tuple, setting a
-        // different sequencer ID
+        // different shard ID
         let b = postgres
             .repositories()
             .await
             .partitions()
-            .create_or_get(key, sequencers[1].id, table_id)
+            .create_or_get(key, shards[1].id, table_id)
             .await
             .expect("result should not be evaluated");
 
@@ -2468,7 +2468,7 @@ mod tests {
 
                     let postgres: Arc<dyn Catalog> = Arc::new(postgres);
                     let mut txn = postgres.start_transaction().await.expect("txn start");
-                    let (kafka, query, _sequencers) = create_or_get_default_records(1, txn.deref_mut())
+                    let (kafka, query, _shards) = create_or_get_default_records(1, txn.deref_mut())
                         .await
                         .expect("db init failed");
                     txn.commit().await.expect("txn commit");

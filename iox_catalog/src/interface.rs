@@ -5,7 +5,7 @@ use data_types::{
     Column, ColumnSchema, ColumnType, KafkaPartition, KafkaTopic, KafkaTopicId, Namespace,
     NamespaceId, NamespaceSchema, ParquetFile, ParquetFileId, ParquetFileParams,
     ParquetFileWithMetadata, Partition, PartitionId, PartitionInfo, ProcessedTombstone, QueryPool,
-    QueryPoolId, SequenceNumber, Sequencer, ShardId, Table, TableId, TablePartition, TableSchema,
+    QueryPoolId, SequenceNumber, Shard, ShardId, Table, TableId, TablePartition, TableSchema,
     Timestamp, Tombstone, TombstoneId,
 };
 use iox_time::TimeProvider;
@@ -221,8 +221,8 @@ pub trait RepoCollection: Send + Sync + Debug {
     /// repo for columns
     fn columns(&mut self) -> &mut dyn ColumnRepo;
 
-    /// repo for sequencers
-    fn sequencers(&mut self) -> &mut dyn SequencerRepo;
+    /// repo for shards
+    fn shards(&mut self) -> &mut dyn ShardRepo;
 
     /// repo for partitions
     fn partitions(&mut self) -> &mut dyn PartitionRepo;
@@ -367,30 +367,30 @@ pub trait ColumnRepo: Send + Sync {
     async fn list(&mut self) -> Result<Vec<Column>>;
 }
 
-/// Functions for working with sequencers in the catalog
+/// Functions for working with shards in the catalog
 #[async_trait]
-pub trait SequencerRepo: Send + Sync {
-    /// create a sequencer record for the kafka topic and partition or return the existing record
+pub trait ShardRepo: Send + Sync {
+    /// create a shard record for the kafka topic and partition or return the existing record
     async fn create_or_get(
         &mut self,
         topic: &KafkaTopic,
         partition: KafkaPartition,
-    ) -> Result<Sequencer>;
+    ) -> Result<Shard>;
 
-    /// get the sequencer record by `KafkaTopicId` and `KafkaPartition`
+    /// get the shard record by `KafkaTopicId` and `KafkaPartition`
     async fn get_by_topic_id_and_partition(
         &mut self,
         topic_id: KafkaTopicId,
         partition: KafkaPartition,
-    ) -> Result<Option<Sequencer>>;
+    ) -> Result<Option<Shard>>;
 
-    /// list all sequencers
-    async fn list(&mut self) -> Result<Vec<Sequencer>>;
+    /// list all shards
+    async fn list(&mut self) -> Result<Vec<Shard>>;
 
-    /// list all sequencers for a given kafka topic
-    async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Sequencer>>;
+    /// list all shards for a given kafka topic
+    async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Shard>>;
 
-    /// updates the `min_unpersisted_sequence_number` for a sequencer
+    /// updates the `min_unpersisted_sequence_number` for a shard
     async fn update_min_unpersisted_sequence_number(
         &mut self,
         shard_id: ShardId,
@@ -402,7 +402,7 @@ pub trait SequencerRepo: Send + Sync {
 /// data within a database, which is differenet than Kafka partitions.
 #[async_trait]
 pub trait PartitionRepo: Send + Sync {
-    /// create or get a partition record for the given partition key, sequencer and table
+    /// create or get a partition record for the given partition key, shard and table
     async fn create_or_get(
         &mut self,
         key: &str,
@@ -413,8 +413,8 @@ pub trait PartitionRepo: Send + Sync {
     /// get partition by ID
     async fn get_by_id(&mut self, partition_id: PartitionId) -> Result<Option<Partition>>;
 
-    /// return partitions for a given sequencer
-    async fn list_by_sequencer(&mut self, shard_id: ShardId) -> Result<Vec<Partition>>;
+    /// return partitions for a given shard
+    async fn list_by_shard(&mut self, shard_id: ShardId) -> Result<Vec<Partition>>;
 
     /// return partitions for a given namespace
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Partition>>;
@@ -460,10 +460,10 @@ pub trait TombstoneRepo: Send + Sync {
     /// get tombstones of the given id
     async fn get_by_id(&mut self, tombstone_id: TombstoneId) -> Result<Option<Tombstone>>;
 
-    /// return all tombstones for the sequencer with a sequence number greater than that
+    /// return all tombstones for the shard with a sequence number greater than that
     /// passed in. This will be used by the ingester on startup to see what tombstones
     /// might have to be applied to data that is read from the write buffer.
-    async fn list_tombstones_by_sequencer_greater_than(
+    async fn list_tombstones_by_shard_greater_than(
         &mut self,
         shard_id: ShardId,
         sequence_number: SequenceNumber,
@@ -501,11 +501,11 @@ pub trait ParquetFileRepo: Send + Sync {
     /// Flag the parquet file for deletion
     async fn flag_for_delete(&mut self, id: ParquetFileId) -> Result<()>;
 
-    /// Get all parquet files for a sequencer with a max_sequence_number greater than the
+    /// Get all parquet files for a shard with a max_sequence_number greater than the
     /// one passed in. The ingester will use this on startup to see which files were persisted
     /// that are greater than its min_unpersisted_number so that it can discard any data in
     /// these partitions on replay.
-    async fn list_by_sequencer_greater_than(
+    async fn list_by_shard_greater_than(
         &mut self,
         shard_id: ShardId,
         sequence_number: SequenceNumber,
@@ -533,7 +533,7 @@ pub trait ParquetFileRepo: Send + Sync {
     /// Returns the deleted records.
     async fn delete_old(&mut self, older_than: Timestamp) -> Result<Vec<ParquetFile>>;
 
-    /// List parquet files for a given sequencer with compaction level 0 and other criteria that
+    /// List parquet files for a given shard with compaction level 0 and other criteria that
     /// define a file as a candidate for compaction
     async fn level_0(&mut self, shard_id: ShardId) -> Result<Vec<ParquetFile>>;
 
@@ -578,7 +578,7 @@ pub trait ParquetFileRepo: Send + Sync {
     async fn count(&mut self) -> Result<i64>;
 
     /// Return count of files of given tableId and ShardId that
-    /// overlap with the given min_time and max_time and have sequencer number
+    /// overlap with the given min_time and max_time and have a sequence number
     /// smaller the given one
     async fn count_by_overlaps(
         &mut self,
@@ -788,7 +788,7 @@ pub(crate) mod test_helpers {
         test_namespace(Arc::clone(&catalog)).await;
         test_table(Arc::clone(&catalog)).await;
         test_column(Arc::clone(&catalog)).await;
-        test_sequencer(Arc::clone(&catalog)).await;
+        test_shard(Arc::clone(&catalog)).await;
         test_partition(Arc::clone(&catalog)).await;
         test_tombstone(Arc::clone(&catalog)).await;
         test_tombstones_by_parquet_file(Arc::clone(&catalog)).await;
@@ -808,7 +808,7 @@ pub(crate) mod test_helpers {
         assert_metric_hit(&*metrics, "namespace_create");
         assert_metric_hit(&*metrics, "table_create_or_get");
         assert_metric_hit(&*metrics, "column_create_or_get");
-        assert_metric_hit(&*metrics, "sequencer_create_or_get");
+        assert_metric_hit(&*metrics, "shard_create_or_get");
         assert_metric_hit(&*metrics, "partition_create_or_get");
         assert_metric_hit(&*metrics, "tombstone_create_or_get");
         assert_metric_hit(&*metrics, "parquet_create");
@@ -1034,21 +1034,21 @@ pub(crate) mod test_helpers {
         assert_eq!(list.as_slice(), [tt, test_table, foo_table]);
 
         // test we can get table persistence info with no persistence so far
-        let seq = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(555))
             .await
             .unwrap();
         let ti = repos
             .tables()
-            .get_table_persist_info(seq.id, t.namespace_id, &t.name)
+            .get_table_persist_info(shard.id, t.namespace_id, &t.name)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
             ti,
             TablePersistInfo {
-                shard_id: seq.id,
+                shard_id: shard.id,
                 table_id: t.id,
                 tombstone_max_sequence_number: None
             }
@@ -1059,7 +1059,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 t.id,
-                seq.id,
+                shard.id,
                 SequenceNumber::new(2001),
                 Timestamp::new(1),
                 Timestamp::new(10),
@@ -1069,14 +1069,14 @@ pub(crate) mod test_helpers {
             .unwrap();
         let ti = repos
             .tables()
-            .get_table_persist_info(seq.id, t.namespace_id, &t.name)
+            .get_table_persist_info(shard.id, t.namespace_id, &t.name)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
             ti,
             TablePersistInfo {
-                shard_id: seq.id,
+                shard_id: shard.id,
                 table_id: t.id,
                 tombstone_max_sequence_number: Some(tombstone.sequence_number),
             }
@@ -1211,68 +1211,68 @@ pub(crate) mod test_helpers {
         ));
     }
 
-    async fn test_sequencer(catalog: Arc<dyn Catalog>) {
+    async fn test_shard(catalog: Arc<dyn Catalog>) {
         let mut repos = catalog.repositories().await;
         let kafka = repos
             .kafka_topics()
-            .create_or_get("sequencer_test")
+            .create_or_get("shard_test")
             .await
             .unwrap();
 
-        // Create 10 sequencers
+        // Create 10 shards
         let mut created = BTreeMap::new();
         for partition in 1..=10 {
-            let sequencer = repos
-                .sequencers()
+            let shard = repos
+                .shards()
                 .create_or_get(&kafka, KafkaPartition::new(partition))
                 .await
-                .expect("failed to create sequencer");
-            created.insert(sequencer.id, sequencer);
+                .expect("failed to create shard");
+            created.insert(shard.id, shard);
         }
 
         // List them and assert they match
         let listed = repos
-            .sequencers()
+            .shards()
             .list_by_kafka_topic(&kafka)
             .await
-            .expect("failed to list sequencers")
+            .expect("failed to list shards")
             .into_iter()
             .map(|v| (v.id, v))
             .collect::<BTreeMap<_, _>>();
 
         assert_eq!(created, listed);
 
-        // get by the sequencer id and partition
+        // get by the shard id and partition
         let kafka_partition = KafkaPartition::new(1);
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .get_by_topic_id_and_partition(kafka.id, kafka_partition)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(kafka.id, sequencer.kafka_topic_id);
-        assert_eq!(kafka_partition, sequencer.kafka_partition);
+        assert_eq!(kafka.id, shard.kafka_topic_id);
+        assert_eq!(kafka_partition, shard.kafka_partition);
 
         // update the number
         repos
-            .sequencers()
-            .update_min_unpersisted_sequence_number(sequencer.id, SequenceNumber::new(53))
+            .shards()
+            .update_min_unpersisted_sequence_number(shard.id, SequenceNumber::new(53))
             .await
             .unwrap();
-        let updated_sequencer = repos
-            .sequencers()
+        let updated_shard = repos
+            .shards()
             .create_or_get(&kafka, kafka_partition)
             .await
             .unwrap();
-        assert_eq!(updated_sequencer.id, sequencer.id);
-        assert_eq!(updated_sequencer.min_unpersisted_sequence_number, 53);
+        assert_eq!(updated_shard.id, shard.id);
+        assert_eq!(updated_shard.min_unpersisted_sequence_number, 53);
 
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .get_by_topic_id_and_partition(kafka.id, KafkaPartition::new(523))
             .await
             .unwrap();
-        assert!(sequencer.is_none());
+        assert!(shard.is_none());
     }
 
     async fn test_partition(catalog: Arc<dyn Catalog>) {
@@ -1289,13 +1289,13 @@ pub(crate) mod test_helpers {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
-        let other_sequencer = repos
-            .sequencers()
+        let other_shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(2))
             .await
             .unwrap();
@@ -1304,14 +1304,14 @@ pub(crate) mod test_helpers {
         for key in ["foo", "bar"] {
             let partition = repos
                 .partitions()
-                .create_or_get(key, sequencer.id, table.id)
+                .create_or_get(key, shard.id, table.id)
                 .await
                 .expect("failed to create partition");
             created.insert(partition.id, partition);
         }
         let other_partition = repos
             .partitions()
-            .create_or_get("asdf", other_sequencer.id, table.id)
+            .create_or_get("asdf", other_shard.id, table.id)
             .await
             .unwrap();
 
@@ -1335,7 +1335,7 @@ pub(crate) mod test_helpers {
         // List them and assert they match
         let listed = repos
             .partitions()
-            .list_by_sequencer(sequencer.id)
+            .list_by_shard(shard.id)
             .await
             .expect("failed to list partitions")
             .into_iter()
@@ -1380,7 +1380,7 @@ pub(crate) mod test_helpers {
             .unwrap();
         repos
             .partitions()
-            .create_or_get("some_key", sequencer.id, table2.id)
+            .create_or_get("some_key", shard.id, table2.id)
             .await
             .expect("failed to create partition");
         let listed = repos
@@ -1459,8 +1459,8 @@ pub(crate) mod test_helpers {
             .create_or_get("other", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
@@ -1471,7 +1471,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(1),
                 min_time,
                 max_time,
@@ -1480,7 +1480,7 @@ pub(crate) mod test_helpers {
             .await
             .unwrap();
         assert!(t1.id > TombstoneId::new(0));
-        assert_eq!(t1.shard_id, sequencer.id);
+        assert_eq!(t1.shard_id, shard.id);
         assert_eq!(t1.sequence_number, SequenceNumber::new(1));
         assert_eq!(t1.min_time, min_time);
         assert_eq!(t1.max_time, max_time);
@@ -1489,7 +1489,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 other_table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(2),
                 min_time.add(10),
                 max_time.add(10),
@@ -1501,7 +1501,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(3),
                 min_time.add(10),
                 max_time.add(10),
@@ -1512,7 +1512,7 @@ pub(crate) mod test_helpers {
 
         let listed = repos
             .tombstones()
-            .list_tombstones_by_sequencer_greater_than(sequencer.id, SequenceNumber::new(1))
+            .list_tombstones_by_shard_greater_than(shard.id, SequenceNumber::new(1))
             .await
             .unwrap();
         assert_eq!(vec![t2.clone(), t3.clone()], listed);
@@ -1542,7 +1542,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table2.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(1),
                 min_time.add(10),
                 max_time.add(10),
@@ -1554,7 +1554,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table2.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(2),
                 min_time.add(10),
                 max_time.add(10),
@@ -1627,19 +1627,19 @@ pub(crate) mod test_helpers {
             .create_or_get("other", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(57))
             .await
             .unwrap();
-        let other_sequencer = repos
-            .sequencers()
+        let other_shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(58))
             .await
             .unwrap();
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -1648,7 +1648,7 @@ pub(crate) mod test_helpers {
         let max_sequence_number = SequenceNumber::new(140);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -1674,7 +1674,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                other_sequencer.id,
+                other_shard.id,
                 max_sequence_number + 100,
                 min_time,
                 max_time,
@@ -1688,7 +1688,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 other_table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 101,
                 min_time,
                 max_time,
@@ -1702,7 +1702,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number - 10,
                 min_time,
                 max_time,
@@ -1716,7 +1716,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number,
                 min_time,
                 max_time,
@@ -1730,7 +1730,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 102,
                 min_time - 5,
                 min_time - 4,
@@ -1744,7 +1744,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 103,
                 max_time + 1,
                 max_time + 2,
@@ -1758,7 +1758,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 104,
                 min_time,
                 max_time,
@@ -1772,7 +1772,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 105,
                 min_time - 1,
                 min_time + 1,
@@ -1786,7 +1786,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 max_sequence_number + 106,
                 max_time - 1,
                 max_time + 1,
@@ -1798,7 +1798,7 @@ pub(crate) mod test_helpers {
         let tombstones = repos
             .tombstones()
             .list_tombstones_for_time_range(
-                sequencer.id,
+                shard.id,
                 table.id,
                 max_sequence_number,
                 min_time,
@@ -1842,24 +1842,24 @@ pub(crate) mod test_helpers {
             .create_or_get("other", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
         let other_partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, other_table.id)
+            .create_or_get("one", shard.id, other_table.id)
             .await
             .unwrap();
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -1924,13 +1924,13 @@ pub(crate) mod test_helpers {
 
         let files = repos
             .parquet_files()
-            .list_by_sequencer_greater_than(sequencer.id, SequenceNumber::new(1))
+            .list_by_shard_greater_than(shard.id, SequenceNumber::new(1))
             .await
             .unwrap();
         assert_eq!(vec![parquet_file, other_file], files);
         let files = repos
             .parquet_files()
-            .list_by_sequencer_greater_than(sequencer.id, SequenceNumber::new(150))
+            .list_by_shard_greater_than(shard.id, SequenceNumber::new(150))
             .await
             .unwrap();
         assert_eq!(vec![other_file], files);
@@ -1952,7 +1952,7 @@ pub(crate) mod test_helpers {
             .unwrap();
         let files = repos
             .parquet_files()
-            .list_by_sequencer_greater_than(sequencer.id, SequenceNumber::new(1))
+            .list_by_shard_greater_than(shard.id, SequenceNumber::new(1))
             .await
             .unwrap();
         let marked_deleted = files.first().unwrap();
@@ -2020,7 +2020,7 @@ pub(crate) mod test_helpers {
             .unwrap();
         let partition2 = repos
             .partitions()
-            .create_or_get("foo", sequencer.id, table2.id)
+            .create_or_get("foo", shard.id, table2.id)
             .await
             .unwrap();
         let files = repos
@@ -2103,7 +2103,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(11),
                 Timestamp::new(20),
                 SequenceNumber::new(20),
@@ -2116,7 +2116,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(1),
                 Timestamp::new(10),
                 SequenceNumber::new(20),
@@ -2130,7 +2130,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(7),
                 Timestamp::new(55),
                 SequenceNumber::new(20),
@@ -2143,7 +2143,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(1),
                 Timestamp::new(100),
                 SequenceNumber::new(20),
@@ -2156,7 +2156,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(15),
                 Timestamp::new(100),
                 SequenceNumber::new(20),
@@ -2169,7 +2169,7 @@ pub(crate) mod test_helpers {
             .parquet_files()
             .count_by_overlaps(
                 partition2.table_id,
-                sequencer.id,
+                shard.id,
                 Timestamp::new(15),
                 Timestamp::new(100),
                 SequenceNumber::new(2),
@@ -2198,20 +2198,20 @@ pub(crate) mod test_helpers {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(100))
             .await
             .unwrap();
-        let other_sequencer = repos
-            .sequencers()
+        let other_shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(101))
             .await
             .unwrap();
 
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -2219,7 +2219,7 @@ pub(crate) mod test_helpers {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2243,7 +2243,7 @@ pub(crate) mod test_helpers {
 
         // Create a compaction level 0 file for some other sequencer
         let other_sequencer_params = ParquetFileParams {
-            shard_id: other_sequencer.id,
+            shard_id: other_shard.id,
             object_store_id: Uuid::new_v4(),
             ..parquet_file_params.clone()
         };
@@ -2284,7 +2284,7 @@ pub(crate) mod test_helpers {
 
         // Level 0 parquet files for a sequencer should contain only those that match the right
         // criteria
-        let level_0 = repos.parquet_files().level_0(sequencer.id).await.unwrap();
+        let level_0 = repos.parquet_files().level_0(shard.id).await.unwrap();
         let mut level_0_ids: Vec<_> = level_0.iter().map(|pf| pf.id).collect();
         level_0_ids.sort();
         let expected = vec![parquet_file];
@@ -2322,24 +2322,24 @@ pub(crate) mod test_helpers {
             .create_or_get("test_table2", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(100))
             .await
             .unwrap();
-        let other_sequencer = repos
-            .sequencers()
+        let other_shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(101))
             .await
             .unwrap();
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
         let other_partition = repos
             .partitions()
-            .create_or_get("two", sequencer.id, table.id)
+            .create_or_get("two", shard.id, table.id)
             .await
             .unwrap();
 
@@ -2349,7 +2349,7 @@ pub(crate) mod test_helpers {
 
         // Create a file with times entirely within the window
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2427,7 +2427,7 @@ pub(crate) mod test_helpers {
 
         // Create a file for some other sequencer
         let other_sequencer_params = ParquetFileParams {
-            shard_id: other_sequencer.id,
+            shard_id: other_shard.id,
             object_store_id: Uuid::new_v4(),
             ..parquet_file_params.clone()
         };
@@ -2496,7 +2496,7 @@ pub(crate) mod test_helpers {
 
         // Level 1 parquet files for a sequencer should contain only those that match the right
         // criteria
-        let table_partition = TablePartition::new(sequencer.id, table.id, partition.id);
+        let table_partition = TablePartition::new(shard.id, table.id, partition.id);
         let level_1 = repos
             .parquet_files()
             .level_1(table_partition, query_min_time, query_max_time)
@@ -2534,20 +2534,20 @@ pub(crate) mod test_helpers {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(100))
             .await
             .unwrap();
 
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
         let partition2 = repos
             .partitions()
-            .create_or_get("two", sequencer.id, table.id)
+            .create_or_get("two", shard.id, table.id)
             .await
             .unwrap();
 
@@ -2555,7 +2555,7 @@ pub(crate) mod test_helpers {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2657,14 +2657,14 @@ pub(crate) mod test_helpers {
             .create_or_get("update_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1000))
             .await
             .unwrap();
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -2674,7 +2674,7 @@ pub(crate) mod test_helpers {
 
         // Create a file with times entirely within the window
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -2707,7 +2707,7 @@ pub(crate) mod test_helpers {
 
         // Level 0 parquet files should contain both existing files at this point
         let expected = vec![parquet_file, level_0_file];
-        let level_0 = repos.parquet_files().level_0(sequencer.id).await.unwrap();
+        let level_0 = repos.parquet_files().level_0(shard.id).await.unwrap();
         let mut level_0_ids: Vec<_> = level_0.iter().map(|pf| pf.id).collect();
         level_0_ids.sort();
         let mut expected_ids: Vec<_> = expected.iter().map(|pf| pf.id).collect();
@@ -2729,7 +2729,7 @@ pub(crate) mod test_helpers {
 
         // Level 0 parquet files should only contain level_0_file
         let expected = vec![level_0_file];
-        let level_0 = repos.parquet_files().level_0(sequencer.id).await.unwrap();
+        let level_0 = repos.parquet_files().level_0(shard.id).await.unwrap();
         let mut level_0_ids: Vec<_> = level_0.iter().map(|pf| pf.id).collect();
         level_0_ids.sort();
         let mut expected_ids: Vec<_> = expected.iter().map(|pf| pf.id).collect();
@@ -2742,7 +2742,7 @@ pub(crate) mod test_helpers {
 
         // Level 1 parquet files for a sequencer should only contain parquet_file
         let expected = vec![parquet_file];
-        let table_partition = TablePartition::new(sequencer.id, table.id, partition.id);
+        let table_partition = TablePartition::new(shard.id, table.id, partition.id);
         let level_1 = repos
             .parquet_files()
             .level_1(table_partition, query_min_time, query_max_time)
@@ -2778,21 +2778,21 @@ pub(crate) mod test_helpers {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = repos
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
         // parquet files
         let parquet_file_params = ParquetFileParams {
             namespace_id: namespace.id,
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             table_id: partition.table_id,
             partition_id: partition.id,
             object_store_id: Uuid::new_v4(),
@@ -2830,7 +2830,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(10),
                 Timestamp::new(1),
                 Timestamp::new(10),
@@ -2842,7 +2842,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(11),
                 Timestamp::new(100),
                 Timestamp::new(110),
@@ -2854,7 +2854,7 @@ pub(crate) mod test_helpers {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(12),
                 Timestamp::new(200),
                 Timestamp::new(210),

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use data_types::{
     Column, ColumnType, KafkaPartition, KafkaTopic, Namespace, ParquetFile, ParquetFileId,
     ParquetFileParams, ParquetFileWithMetadata, Partition, PartitionId, QueryPool, SequenceNumber,
-    Sequencer, ShardId, Table, TableId, Timestamp, Tombstone, TombstoneId,
+    Shard, ShardId, Table, TableId, Timestamp, Tombstone, TombstoneId,
 };
 use datafusion::physical_plan::metrics::Count;
 use iox_catalog::{
@@ -249,8 +249,8 @@ impl TestNamespace {
     pub async fn create_sequencer(self: &Arc<Self>, sequencer: i32) -> Arc<TestSequencer> {
         let mut repos = self.catalog.catalog.repositories().await;
 
-        let sequencer = repos
-            .sequencers()
+        let shard = repos
+            .shards()
             .create_or_get(&self.kafka_topic, KafkaPartition::new(sequencer))
             .await
             .unwrap();
@@ -258,7 +258,7 @@ impl TestNamespace {
         Arc::new(TestSequencer {
             catalog: Arc::clone(&self.catalog),
             namespace: Arc::clone(self),
-            sequencer,
+            shard,
         })
     }
 }
@@ -269,7 +269,7 @@ impl TestNamespace {
 pub struct TestSequencer {
     pub catalog: Arc<TestCatalog>,
     pub namespace: Arc<TestNamespace>,
-    pub sequencer: Sequencer,
+    pub shard: Shard,
 }
 
 /// A test table of a namespace in the catalog
@@ -345,7 +345,7 @@ impl TestTableBoundSequencer {
 
         let partition = repos
             .partitions()
-            .create_or_get(key, self.sequencer.sequencer.id, self.table.table.id)
+            .create_or_get(key, self.sequencer.shard.id, self.table.table.id)
             .await
             .unwrap();
 
@@ -368,7 +368,7 @@ impl TestTableBoundSequencer {
 
         let partition = repos
             .partitions()
-            .create_or_get(key, self.sequencer.sequencer.id, self.table.table.id)
+            .create_or_get(key, self.sequencer.shard.id, self.table.table.id)
             .await
             .unwrap();
 
@@ -401,7 +401,7 @@ impl TestTableBoundSequencer {
             .tombstones()
             .create_or_get(
                 self.table.table.id,
-                self.sequencer.sequencer.id,
+                self.sequencer.shard.id,
                 SequenceNumber::new(sequence_number),
                 Timestamp::new(min_time),
                 Timestamp::new(max_time),
@@ -513,7 +513,7 @@ impl TestPartition {
             creation_timestamp: now(),
             namespace_id: self.namespace.namespace.id,
             namespace_name: self.namespace.namespace.name.clone().into(),
-            shard_id: self.sequencer.sequencer.id,
+            shard_id: self.sequencer.shard.id,
             table_id: self.table.table.id,
             table_name: self.table.table.name.clone().into(),
             partition_id: self.partition.id,
@@ -534,7 +534,7 @@ impl TestPartition {
         .await;
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: self.sequencer.sequencer.id,
+            shard_id: self.sequencer.shard.id,
             namespace_id: self.namespace.namespace.id,
             table_id: self.table.table.id,
             partition_id: self.partition.id,

@@ -1,7 +1,7 @@
 //! Ingest handler
 
 use crate::{
-    data::{IngesterData, IngesterQueryResponse, SequencerData},
+    data::{IngesterData, IngesterQueryResponse, ShardData},
     lifecycle::{run_lifecycle_manager, LifecycleConfig, LifecycleManager},
     partioning::DefaultPartitioner,
     poison::PoisonCabinet,
@@ -13,7 +13,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use backoff::BackoffConfig;
-use data_types::{KafkaPartition, KafkaTopic, Sequencer};
+use data_types::{KafkaPartition, KafkaTopic, Shard};
 use futures::{
     future::{BoxFuture, Shared},
     stream::FuturesUnordered,
@@ -117,7 +117,7 @@ impl IngestHandlerImpl {
     pub async fn new(
         lifecycle_config: LifecycleConfig,
         topic: KafkaTopic,
-        sequencer_states: BTreeMap<KafkaPartition, Sequencer>,
+        shard_states: BTreeMap<KafkaPartition, Shard>,
         catalog: Arc<dyn Catalog>,
         object_store: Arc<DynObjectStore>,
         write_buffer: Arc<dyn WriteBufferReading>,
@@ -125,17 +125,17 @@ impl IngestHandlerImpl {
         metric_registry: Arc<metric::Registry>,
     ) -> Result<Self> {
         // build the initial ingester data state
-        let mut sequencers = BTreeMap::new();
-        for s in sequencer_states.values() {
-            sequencers.insert(
+        let mut shards = BTreeMap::new();
+        for s in shard_states.values() {
+            shards.insert(
                 s.id,
-                SequencerData::new(s.kafka_partition, Arc::clone(&metric_registry)),
+                ShardData::new(s.kafka_partition, Arc::clone(&metric_registry)),
             );
         }
         let data = Arc::new(IngesterData::new(
             object_store,
             catalog,
-            sequencers,
+            shards,
             Arc::new(DefaultPartitioner::default()),
             exec,
             BackoffConfig::default(),
@@ -164,10 +164,10 @@ impl IngestHandlerImpl {
             lifecycle_config
         );
 
-        let mut join_handles = Vec::with_capacity(sequencer_states.len() + 1);
+        let mut join_handles = Vec::with_capacity(shard_states.len() + 1);
         join_handles.push(("lifecycle manager".to_owned(), shared_handle(handle)));
 
-        for (kafka_partition, sequencer) in sequencer_states {
+        for (kafka_partition, shard) in shard_states {
             let metric_registry = Arc::clone(&metric_registry);
 
             // Acquire a write buffer stream and seek it to the last
@@ -178,18 +178,18 @@ impl IngestHandlerImpl {
                 .context(WriteBufferSnafu)?;
             debug!(
                 kafka_partition = kafka_partition.get(),
-                min_unpersisted_sequence_number = sequencer.min_unpersisted_sequence_number,
+                min_unpersisted_sequence_number = shard.min_unpersisted_sequence_number,
                 "Seek stream",
             );
             op_stream
-                .seek(sequencer.min_unpersisted_sequence_number as u64)
+                .seek(shard.min_unpersisted_sequence_number as u64)
                 .await
                 .context(WriteBufferSnafu)?;
 
             // Initialise the DmlSink stack.
             let watermark_fetcher = PeriodicWatermarkFetcher::new(
                 Arc::clone(&write_buffer),
-                sequencer.kafka_partition,
+                shard.kafka_partition,
                 Duration::from_secs(10),
                 &*metric_registry,
             );
@@ -197,14 +197,14 @@ impl IngestHandlerImpl {
             let sink = IngestSinkAdaptor::new(
                 Arc::clone(&ingester_data),
                 lifecycle_handle.clone(),
-                sequencer.id,
+                shard.id,
             );
             // Emit metrics when ops flow through the sink
             let sink = SinkInstrumentation::new(
                 sink,
                 watermark_fetcher,
                 kafka_topic_name.clone(),
-                sequencer.kafka_partition,
+                shard.kafka_partition,
                 &*metric_registry,
             );
 
@@ -220,7 +220,7 @@ impl IngestHandlerImpl {
                         sink,
                         lifecycle_handle,
                         kafka_topic_name,
-                        sequencer.kafka_partition,
+                        shard.kafka_partition,
                         &*metric_registry,
                     );
 
@@ -410,7 +410,7 @@ mod tests {
             loop {
                 let mut has_measurement = false;
 
-                if let Some(data) = ingester.ingester.data.sequencer(ingester.sequencer.id) {
+                if let Some(data) = ingester.ingester.data.shard(ingester.shard.id) {
                     if let Some(data) = data.namespace(&ingester.namespace.name) {
                         // verify there's data in the buffer
                         if let Some((b, _)) = data.snapshot("a", "1970-01-01").await {
@@ -428,7 +428,7 @@ mod tests {
                     .catalog
                     .repositories()
                     .await
-                    .sequencers()
+                    .shards()
                     .create_or_get(&ingester.kafka_topic, ingester.kafka_partition)
                     .await
                     .unwrap();
@@ -571,21 +571,21 @@ mod tests {
             .create("foo", "inf", kafka_topic.id, query_pool.id)
             .await
             .unwrap();
-        let mut sequencer = txn
-            .sequencers()
+        let mut shard = txn
+            .shards()
             .create_or_get(&kafka_topic, kafka_partition)
             .await
             .unwrap();
         // update the min unpersisted so we can verify this was what was seeked to later
-        sequencer.min_unpersisted_sequence_number = 2;
+        shard.min_unpersisted_sequence_number = 2;
         // this probably isn't necessary, but just in case something changes later
-        txn.sequencers()
-            .update_min_unpersisted_sequence_number(sequencer.id, SequenceNumber::new(2))
+        txn.shards()
+            .update_min_unpersisted_sequence_number(shard.id, SequenceNumber::new(2))
             .await
             .unwrap();
 
-        let mut sequencer_states = BTreeMap::new();
-        sequencer_states.insert(kafka_partition, sequencer);
+        let mut shard_states = BTreeMap::new();
+        shard_states.insert(kafka_partition, shard);
 
         let write_buffer_state =
             MockBufferSharedState::empty_with_n_sequencers(NonZeroU32::try_from(1).unwrap());
@@ -625,7 +625,7 @@ mod tests {
         let ingester = IngestHandlerImpl::new(
             lifecycle_config,
             kafka_topic.clone(),
-            sequencer_states,
+            shard_states,
             Arc::clone(&catalog),
             object_store,
             reading,
@@ -643,7 +643,7 @@ mod tests {
 
                 if let Some(data) = ingester
                     .data
-                    .sequencer(sequencer.id)
+                    .shard(shard.id)
                 {
                     if let Some(data) = data.namespace(&namespace.name) {
                         // verify there's data in the buffer
@@ -674,7 +674,7 @@ mod tests {
 
     struct TestIngester {
         catalog: Arc<dyn Catalog>,
-        sequencer: Sequencer,
+        shard: Shard,
         namespace: Namespace,
         kafka_topic: KafkaTopic,
         kafka_partition: KafkaPartition,
@@ -698,15 +698,15 @@ mod tests {
                 .create("foo", "inf", kafka_topic.id, query_pool.id)
                 .await
                 .unwrap();
-            let sequencer = txn
-                .sequencers()
+            let shard = txn
+                .shards()
                 .create_or_get(&kafka_topic, kafka_partition)
                 .await
                 .unwrap();
             txn.commit().await.unwrap();
 
-            let mut sequencer_states = BTreeMap::new();
-            sequencer_states.insert(kafka_partition, sequencer);
+            let mut shard_states = BTreeMap::new();
+            shard_states.insert(kafka_partition, shard);
 
             let write_buffer_state =
                 MockBufferSharedState::empty_with_n_sequencers(NonZeroU32::try_from(1).unwrap());
@@ -724,7 +724,7 @@ mod tests {
             let ingester = IngestHandlerImpl::new(
                 lifecycle_config,
                 kafka_topic.clone(),
-                sequencer_states,
+                shard_states,
                 Arc::clone(&catalog),
                 object_store,
                 reading,
@@ -736,7 +736,7 @@ mod tests {
 
             Self {
                 catalog,
-                sequencer,
+                shard,
                 namespace,
                 kafka_topic,
                 kafka_partition,

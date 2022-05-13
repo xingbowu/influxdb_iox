@@ -157,14 +157,14 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -172,7 +172,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -239,14 +239,14 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -254,7 +254,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,
@@ -325,14 +325,14 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -340,7 +340,7 @@ mod tests {
         let max_time = Timestamp::new(10);
 
         let parquet_file_params = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: partition.table_id,
             partition_id: partition.id,

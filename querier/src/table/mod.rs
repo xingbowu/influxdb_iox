@@ -151,73 +151,73 @@ impl QuerierTable {
             tombstones.into_iter().map(QuerierTombstone::from).collect();
 
         // match chunks and tombstones
-        let mut tombstones_by_sequencer: HashMap<_, Vec<_>> = HashMap::new();
+        let mut tombstones_by_shard: HashMap<_, Vec<_>> = HashMap::new();
         for tombstone in querier_tombstones {
-            tombstones_by_sequencer
+            tombstones_by_shard
                 .entry(tombstone.shard_id())
                 .or_default()
                 .push(tombstone);
         }
         let mut chunks2 = Vec::with_capacity(chunks.len());
         for chunk in chunks.into_iter() {
-            let chunk =
-                if let Some(tombstones) = tombstones_by_sequencer.get(&chunk.meta().shard_id()) {
-                    let mut delete_predicates = Vec::with_capacity(tombstones.len());
-                    for tombstone in tombstones {
-                        // check conditions that don't need catalog access first to avoid unnecessary catalog load
+            let tombstones = tombstones_by_shard.get(&chunk.meta().shard_id());
+            let chunk = if let Some(tombstones) = tombstones {
+                let mut delete_predicates = Vec::with_capacity(tombstones.len());
+                for tombstone in tombstones {
+                    // check conditions that don't need catalog access first to avoid unnecessary catalog load
 
-                        // Check if tombstone should be excluded based on the ingester response
-                        if tombstone_exclusion
-                            .contains(&(chunk.meta().partition_id(), tombstone.tombstone_id()))
-                        {
-                            continue;
-                        }
-
-                        // Check if tombstone even applies to the sequence number range within the parquet file. There
-                        // are the following cases here:
-                        //
-                        // 1. Tombstone comes before chunk min sequencer number:
-                        //    There is no way the tombstone can affect the chunk.
-                        // 2. Tombstone comes after chunk max sequencer number:
-                        //    Tombstone affects whole chunk (it might be marked as processed though, we'll check that
-                        //    further down).
-                        // 3. Tombstone is in the min-max sequencer number range of the chunk:
-                        //    Technically the querier has NO way to determine the rows that are affected by the tombstone
-                        //    since we have no row-level sequence numbers. Such a file can be created by two sources -- the
-                        //    ingester and the compactor. The ingester must have materialized the tombstone while creating
-                        //    the parquet file, so the querier can skip it. The compactor also materialized the tombstones,
-                        //    so we can skip it as well. In the compactor case the tombstone will even be marked as
-                        //    processed.
-                        //
-                        // So the querier only needs to consider the tombstone in case 2.
-                        if tombstone.sequence_number() <= chunk.meta().max_sequence_number() {
-                            continue;
-                        }
-
-                        // TODO: also consider time ranges (https://github.com/influxdata/influxdb_iox/issues/4086)
-
-                        // check if tombstone is marked as processed
-                        if self
-                            .chunk_adapter
-                            .catalog_cache()
-                            .processed_tombstones()
-                            .exists(
-                                chunk
-                                    .parquet_file_id()
-                                    .expect("just created from a parquet file"),
-                                tombstone.tombstone_id(),
-                            )
-                            .await
-                        {
-                            continue;
-                        }
-
-                        delete_predicates.push(Arc::clone(tombstone.delete_predicate()));
+                    // Check if tombstone should be excluded based on the ingester response
+                    if tombstone_exclusion
+                        .contains(&(chunk.meta().partition_id(), tombstone.tombstone_id()))
+                    {
+                        continue;
                     }
-                    chunk.with_delete_predicates(delete_predicates)
-                } else {
-                    chunk
-                };
+
+                    // Check if tombstone even applies to the sequence number range within the parquet file. There
+                    // are the following cases here:
+                    //
+                    // 1. Tombstone comes before chunk min sequencer number:
+                    //    There is no way the tombstone can affect the chunk.
+                    // 2. Tombstone comes after chunk max sequencer number:
+                    //    Tombstone affects whole chunk (it might be marked as processed though, we'll check that
+                    //    further down).
+                    // 3. Tombstone is in the min-max sequencer number range of the chunk:
+                    //    Technically the querier has NO way to determine the rows that are affected by the tombstone
+                    //    since we have no row-level sequence numbers. Such a file can be created by two sources -- the
+                    //    ingester and the compactor. The ingester must have materialized the tombstone while creating
+                    //    the parquet file, so the querier can skip it. The compactor also materialized the tombstones,
+                    //    so we can skip it as well. In the compactor case the tombstone will even be marked as
+                    //    processed.
+                    //
+                    // So the querier only needs to consider the tombstone in case 2.
+                    if tombstone.sequence_number() <= chunk.meta().max_sequence_number() {
+                        continue;
+                    }
+
+                    // TODO: also consider time ranges (https://github.com/influxdata/influxdb_iox/issues/4086)
+
+                    // check if tombstone is marked as processed
+                    if self
+                        .chunk_adapter
+                        .catalog_cache()
+                        .processed_tombstones()
+                        .exists(
+                            chunk
+                                .parquet_file_id()
+                                .expect("just created from a parquet file"),
+                            tombstone.tombstone_id(),
+                        )
+                        .await
+                    {
+                        continue;
+                    }
+
+                    delete_predicates.push(Arc::clone(tombstone.delete_predicate()));
+                }
+                chunk.with_delete_predicates(delete_predicates)
+            } else {
+                chunk
+            };
 
             chunks2.push(Arc::new(chunk) as Arc<dyn QueryChunk>);
         }
@@ -498,7 +498,7 @@ mod tests {
                     Arc::from(ns.namespace.name.clone()),
                     Arc::from(table.table.name.clone()),
                     partition.partition.id,
-                    sequencer.sequencer.id,
+                    sequencer.shard.id,
                     Arc::new(SchemaBuilder::new().build().unwrap()),
                     Some(SequenceNumber::new(1)),
                     None,
@@ -610,7 +610,7 @@ mod tests {
                         Arc::from(ns.namespace.name.clone()),
                         Arc::from(table.table.name.clone()),
                         partition1.partition.id,
-                        sequencer.sequencer.id,
+                        sequencer.shard.id,
                         Arc::new(
                             SchemaBuilder::new()
                                 .influx_field("foo", InfluxFieldType::Integer)
@@ -633,7 +633,7 @@ mod tests {
                         Arc::from(ns.namespace.name.clone()),
                         Arc::from(table.table.name.clone()),
                         partition2.partition.id,
-                        sequencer.sequencer.id,
+                        sequencer.shard.id,
                         Arc::new(
                             SchemaBuilder::new()
                                 .influx_field("foo", InfluxFieldType::Integer)

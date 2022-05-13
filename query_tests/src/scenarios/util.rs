@@ -14,7 +14,7 @@ use generated_types::{
 };
 use influxdb_iox_client::flight::Error as FlightError;
 use ingester::{
-    data::{IngesterData, IngesterQueryResponse, Persister, SequencerData},
+    data::{IngesterData, IngesterQueryResponse, Persister, ShardData},
     lifecycle::LifecycleHandle,
     partioning::{Partitioner, PartitionerError},
     querier_handler::prepare_data_to_querier,
@@ -609,11 +609,8 @@ impl MockIngester {
         let sequencer = ns.create_sequencer(1).await;
 
         let sequencers = BTreeMap::from([(
-            sequencer.sequencer.id,
-            SequencerData::new(
-                sequencer.sequencer.kafka_partition,
-                catalog.metric_registry(),
-            ),
+            sequencer.shard.id,
+            ShardData::new(sequencer.shard.kafka_partition, catalog.metric_registry()),
         )]);
         let partitioner = Arc::new(ConstantPartitioner::default());
         let ingester_data = Arc::new(IngesterData::new(
@@ -655,11 +652,7 @@ impl MockIngester {
 
         let should_pause = self
             .ingester_data
-            .buffer_operation(
-                self.sequencer.sequencer.id,
-                dml_operation,
-                &lifecycle_handle,
-            )
+            .buffer_operation(self.sequencer.shard.id, dml_operation, &lifecycle_handle)
             .await
             .unwrap();
         assert!(!should_pause);
@@ -734,7 +727,7 @@ impl MockIngester {
             partition_key.to_string(),
         );
         let meta = DmlMeta::sequenced(
-            Sequence::new(self.sequencer.sequencer.id.get() as u32, sequence_number),
+            Sequence::new(self.sequencer.shard.id.get() as u32, sequence_number),
             self.catalog.time_provider().now(),
             None,
             0,
@@ -758,7 +751,7 @@ impl MockIngester {
 
         let sequence_number = self.next_sequence_number();
         let meta = DmlMeta::sequenced(
-            Sequence::new(self.sequencer.sequencer.id.get() as u32, sequence_number),
+            Sequence::new(self.sequencer.shard.id.get() as u32, sequence_number),
             self.catalog.time_provider().now(),
             None,
             0,

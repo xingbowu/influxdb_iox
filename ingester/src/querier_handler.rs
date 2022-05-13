@@ -93,8 +93,8 @@ pub async fn prepare_data_to_querier(
     let mut found_namespace = false;
     let mut batches = vec![];
     let mut batch_partition_ids = vec![];
-    for (_shard_id, sequencer_data) in ingest_data.sequencers() {
-        let namespace_data = match sequencer_data.namespace(&request.namespace) {
+    for (_shard_id, shard_data) in ingest_data.shards() {
+        let namespace_data = match shard_data.namespace(&request.namespace) {
             Some(namespace_data) => {
                 found_namespace = true;
                 namespace_data

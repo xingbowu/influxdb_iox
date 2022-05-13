@@ -140,8 +140,8 @@ mod tests {
                 .create_or_get("iox_shared")
                 .await
                 .unwrap();
-            let sequencer = repos
-                .sequencers()
+            let shard = repos
+                .shards()
                 .create_or_get(&kafka, KafkaPartition::new(1))
                 .await
                 .unwrap();
@@ -157,11 +157,11 @@ mod tests {
                 .unwrap();
             let partition = repos
                 .partitions()
-                .create_or_get("foo", sequencer.id, table.id)
+                .create_or_get("foo", shard.id, table.id)
                 .await
                 .unwrap();
             let p1params = ParquetFileParams {
-                shard_id: sequencer.id,
+                shard_id: shard.id,
                 namespace_id: namespace.id,
                 table_id: table.id,
                 partition_id: partition.id,
@@ -223,8 +223,8 @@ mod tests {
                 .create_or_get("iox_shared")
                 .await
                 .unwrap();
-            let sequencer = repos
-                .sequencers()
+            let shard = repos
+                .shards()
                 .create_or_get(&kafka, KafkaPartition::new(1))
                 .await
                 .unwrap();
@@ -240,22 +240,22 @@ mod tests {
                 .unwrap();
             partition1 = repos
                 .partitions()
-                .create_or_get("foo", sequencer.id, table.id)
+                .create_or_get("foo", shard.id, table.id)
                 .await
                 .unwrap();
             partition2 = repos
                 .partitions()
-                .create_or_get("bar", sequencer.id, table.id)
+                .create_or_get("bar", shard.id, table.id)
                 .await
                 .unwrap();
-            let sequencer2 = repos
-                .sequencers()
+            let shard2 = repos
+                .shards()
                 .create_or_get(&kafka, KafkaPartition::new(2))
                 .await
                 .unwrap();
             partition3 = repos
                 .partitions()
-                .create_or_get("foo", sequencer2.id, table.id)
+                .create_or_get("foo", shard2.id, table.id)
                 .await
                 .unwrap();
 

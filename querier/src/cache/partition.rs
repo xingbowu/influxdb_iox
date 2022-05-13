@@ -94,15 +94,15 @@ mod tests {
         let cache = PartitionCache::new(catalog.catalog(), BackoffConfig::default());
 
         let id1 = cache.shard_id(p1.id).await;
-        assert_eq!(id1, s1.sequencer.id);
+        assert_eq!(id1, s1.shard.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 1);
 
         let id2 = cache.shard_id(p2.id).await;
-        assert_eq!(id2, s2.sequencer.id);
+        assert_eq!(id2, s2.shard.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 2);
 
         let id1 = cache.shard_id(p1.id).await;
-        assert_eq!(id1, s1.sequencer.id);
+        assert_eq!(id1, s1.shard.id);
         assert_histogram_metric_count(&catalog.metric_registry, "partition_get_by_id", 2);
     }
 

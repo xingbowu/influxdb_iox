@@ -620,15 +620,15 @@ pub fn column_type_from_field(field_value: &FieldValue) -> ColumnType {
     }
 }
 
-/// Data object for a sequencer. Only one sequencer record can exist for a given
+/// Data object for a shard. Only one shard record can exist for a given
 /// kafka topic and partition (enforced via uniqueness constraint).
 #[derive(Debug, Copy, Clone, PartialEq, sqlx::FromRow)]
-pub struct Sequencer {
-    /// the id of the sequencer
+pub struct Shard {
+    /// the id of the shard
     pub id: ShardId,
-    /// the topic the sequencer is reading from
+    /// the topic the shard is reading from
     pub kafka_topic_id: KafkaTopicId,
-    /// the kafka partition the sequencer is reading from
+    /// the kafka partition the shard is reading from
     pub kafka_partition: KafkaPartition,
     /// The minimum unpersisted sequence number. Because different tables
     /// can be persisted at different times, it is possible some data has been persisted
@@ -637,7 +637,7 @@ pub struct Sequencer {
     pub min_unpersisted_sequence_number: i64,
 }
 
-/// Data object for a partition. The combination of sequencer, table and key are unique (i.e. only
+/// Data object for a partition. The combination of shard, table and key are unique (i.e. only
 /// one record can exist for each combo)
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct Partition {
@@ -681,7 +681,7 @@ pub struct Tombstone {
     pub table_id: TableId,
     /// the shard the tombstone was sent through
     pub shard_id: ShardId,
-    /// the sequence nubmer assigned to the tombstone from the sequencer
+    /// the sequence number assigned to the tombstone from the shard
     pub sequence_number: SequenceNumber,
     /// the min time (inclusive) that the delete applies to
     pub min_time: Timestamp,

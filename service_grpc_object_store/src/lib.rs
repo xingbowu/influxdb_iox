@@ -119,8 +119,8 @@ mod tests {
                 .create_or_get("iox_shared")
                 .await
                 .unwrap();
-            let sequencer = repos
-                .sequencers()
+            let shard = repos
+                .shards()
                 .create_or_get(&kafka, KafkaPartition::new(1))
                 .await
                 .unwrap();
@@ -136,11 +136,11 @@ mod tests {
                 .unwrap();
             let partition = repos
                 .partitions()
-                .create_or_get("foo", sequencer.id, table.id)
+                .create_or_get("foo", shard.id, table.id)
                 .await
                 .unwrap();
             let p1params = ParquetFileParams {
-                shard_id: sequencer.id,
+                shard_id: shard.id,
                 namespace_id: namespace.id,
                 table_id: table.id,
                 partition_id: partition.id,

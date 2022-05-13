@@ -1149,7 +1149,7 @@ mod tests {
             )
             .await;
         // should have 1 level-0 file
-        let count = catalog.count_level_0_files(sequencer.sequencer.id).await;
+        let count = catalog.count_level_0_files(sequencer.shard.id).await;
         assert_eq!(count, 1);
 
         // One overlaped tombstone
@@ -1164,7 +1164,7 @@ mod tests {
         // ------------------------------------------------
         // Compact
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -1288,7 +1288,7 @@ mod tests {
             .await;
         let time = Arc::new(SystemProvider::new());
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -1345,7 +1345,7 @@ mod tests {
             )
             .await;
         // should have 4 level-0 files before compacting
-        let count = catalog.count_level_0_files(sequencer.sequencer.id).await;
+        let count = catalog.count_level_0_files(sequencer.shard.id).await;
         assert_eq!(count, 4);
 
         // create 3 tombstones
@@ -1476,7 +1476,7 @@ mod tests {
             .parquet_file;
 
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -1578,7 +1578,7 @@ mod tests {
             .parquet_file;
 
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -1687,7 +1687,7 @@ mod tests {
             .parquet_file;
 
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -2236,19 +2236,19 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
         let p1 = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2291,7 +2291,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(1),
                 Timestamp::new(3),
                 Timestamp::new(6),
@@ -2306,7 +2306,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(150),
                 Timestamp::new(3),
                 Timestamp::new(6),
@@ -2320,7 +2320,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(300),
                 Timestamp::new(6),
                 Timestamp::new(8),
@@ -2335,7 +2335,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(400),
                 Timestamp::new(1),
                 Timestamp::new(10),
@@ -2521,14 +2521,14 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
 
@@ -2539,7 +2539,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(1),
                 min_time,
                 max_time,
@@ -2551,7 +2551,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(2),
                 min_time,
                 max_time,
@@ -2563,7 +2563,7 @@ mod tests {
             .tombstones()
             .create_or_get(
                 table.id,
-                sequencer.id,
+                shard.id,
                 SequenceNumber::new(3),
                 min_time,
                 max_time,
@@ -2577,7 +2577,7 @@ mod tests {
             creation_timestamp: compactor.time_provider.now(),
             namespace_id: NamespaceId::new(1),
             namespace_name: "mydata".into(),
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             table_id: table.id,
             table_name: "temperature".into(),
             partition_id: PartitionId::new(4),
@@ -2593,7 +2593,7 @@ mod tests {
 
         // Prepare metadata in form of ParquetFileParams to get added with tombstone
         let parquet = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2748,34 +2748,34 @@ mod tests {
             .create_or_get("test_table", namespace.id)
             .await
             .unwrap();
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka, KafkaPartition::new(1))
             .await
             .unwrap();
         let partition = txn
             .partitions()
-            .create_or_get("one", sequencer.id, table.id)
+            .create_or_get("one", shard.id, table.id)
             .await
             .unwrap();
         let partition2 = txn
             .partitions()
-            .create_or_get("two", sequencer.id, table.id)
+            .create_or_get("two", shard.id, table.id)
             .await
             .unwrap();
         let partition3 = txn
             .partitions()
-            .create_or_get("three", sequencer.id, table.id)
+            .create_or_get("three", shard.id, table.id)
             .await
             .unwrap();
         let partition4 = txn
             .partitions()
-            .create_or_get("four", sequencer.id, table.id)
+            .create_or_get("four", shard.id, table.id)
             .await
             .unwrap();
 
         let p1 = ParquetFileParams {
-            shard_id: sequencer.id,
+            shard_id: shard.id,
             namespace_id: namespace.id,
             table_id: table.id,
             partition_id: partition.id,
@@ -2823,7 +2823,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         let compactor = Compactor::new(
-            vec![sequencer.id],
+            vec![shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),
@@ -2836,7 +2836,7 @@ mod tests {
         let candidates = compactor.partitions_to_compact().await.unwrap();
         let expect: Vec<PartitionCompactionCandidate> = vec![
             PartitionCompactionCandidate {
-                shard_id: sequencer.id,
+                shard_id: shard.id,
                 table_id: table.id,
                 partition_id: partition.id,
                 level_0_file_count: 2,
@@ -2844,7 +2844,7 @@ mod tests {
                 oldest_file: pf1.created_at,
             },
             PartitionCompactionCandidate {
-                shard_id: sequencer.id,
+                shard_id: shard.id,
                 table_id: table.id,
                 partition_id: partition3.id,
                 level_0_file_count: 1,
@@ -2852,7 +2852,7 @@ mod tests {
                 oldest_file: pf4.created_at,
             },
             PartitionCompactionCandidate {
-                shard_id: sequencer.id,
+                shard_id: shard.id,
                 table_id: table.id,
                 partition_id: partition2.id,
                 level_0_file_count: 1,
@@ -2897,7 +2897,7 @@ mod tests {
             .parquet_file;
 
         let compactor = Compactor::new(
-            vec![sequencer.sequencer.id],
+            vec![sequencer.shard.id],
             Arc::clone(&catalog.catalog),
             Arc::clone(&catalog.object_store),
             Arc::new(Executor::new(1)),

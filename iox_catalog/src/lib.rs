@@ -13,8 +13,7 @@
 
 use crate::interface::{ColumnUpsertRequest, Error, RepoCollection, Result, Transaction};
 use data_types::{
-    ColumnType, KafkaPartition, KafkaTopic, NamespaceSchema, QueryPool, Sequencer, ShardId,
-    TableSchema,
+    ColumnType, KafkaPartition, KafkaTopic, NamespaceSchema, QueryPool, Shard, ShardId, TableSchema,
 };
 use mutable_batch::MutableBatch;
 use std::{borrow::Cow, collections::BTreeMap};
@@ -170,25 +169,25 @@ where
     Ok(())
 }
 
-/// Creates or gets records in the catalog for the shared kafka topic, query pool, and sequencers for
+/// Creates or gets records in the catalog for the shared kafka topic, query pool, and shards for
 /// each of the partitions.
 pub async fn create_or_get_default_records(
     kafka_partition_count: i32,
     txn: &mut dyn Transaction,
-) -> Result<(KafkaTopic, QueryPool, BTreeMap<ShardId, Sequencer>)> {
+) -> Result<(KafkaTopic, QueryPool, BTreeMap<ShardId, Shard>)> {
     let kafka_topic = txn.kafka_topics().create_or_get(SHARED_KAFKA_TOPIC).await?;
     let query_pool = txn.query_pools().create_or_get(SHARED_QUERY_POOL).await?;
 
-    let mut sequencers = BTreeMap::new();
+    let mut shards = BTreeMap::new();
     for partition in 1..=kafka_partition_count {
-        let sequencer = txn
-            .sequencers()
+        let shard = txn
+            .shards()
             .create_or_get(&kafka_topic, KafkaPartition::new(partition))
             .await?;
-        sequencers.insert(sequencer.id, sequencer);
+        shards.insert(shard.id, shard);
     }
 
-    Ok((kafka_topic, query_pool, sequencers))
+    Ok((kafka_topic, query_pool, shards))
 }
 
 #[cfg(test)]
