@@ -305,7 +305,10 @@ impl IoxMetadata {
             creation_timestamp: Some(self.creation_timestamp.date_time().into()),
             namespace_id: self.namespace_id.get(),
             namespace_name: self.namespace_name.to_string(),
-            sequencer_id: self.shard_id.get(),
+            // Deprecated field. Don't set sequencer_id anymore; it only exists to facilitate the
+            // transitioning of existing files containing the old field.
+            sequencer_id: None,
+            shard_id: self.shard_id.get(),
             table_id: self.table_id.get(),
             table_name: self.table_name.to_string(),
             partition_id: self.partition_id.get(),
@@ -365,7 +368,8 @@ impl IoxMetadata {
             creation_timestamp,
             namespace_id: NamespaceId::new(proto_msg.namespace_id),
             namespace_name,
-            shard_id: ShardId::new(proto_msg.sequencer_id),
+            // Support files that may still have the deprecated sequencer_id field name
+            shard_id: ShardId::new(proto_msg.sequencer_id.unwrap_or(proto_msg.shard_id)),
             table_id: TableId::new(proto_msg.table_id),
             table_name,
             partition_id: PartitionId::new(proto_msg.partition_id),
