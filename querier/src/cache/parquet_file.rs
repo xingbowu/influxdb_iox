@@ -27,7 +27,7 @@ const CACHE_ID: &str = "parquet_file";
 #[derive(Debug, Snafu)]
 #[allow(missing_copy_implementations, missing_docs)]
 pub enum Error {
-    #[snafu(display("{}", source))]
+    #[snafu(display("CatalogError refreshing parquet file cache: {}", source))]
     Catalog {
         source: iox_catalog::interface::Error,
     },
@@ -78,8 +78,12 @@ impl ParquetFileCache {
             let backoff_config = backoff_config.clone();
 
             async move {
-                let parquet_files = Backoff::new(&backoff_config)
+                Backoff::new(&backoff_config)
                     .retry_all_errors("get parquet_files", || async {
+                        // TODO refreshing all parquet files for the entire table is likely to be quite wasteful for large tables.
+                        // Ways this code could be more efficeints:
+                        // 1. incrementally fetch only NEW parquet files
+                        // 2. track time ranges needed for queries and limit files fetched
                         let parquet_files: Vec<_> = catalog
                             .repositories()
                             .await
@@ -95,9 +99,7 @@ impl ParquetFileCache {
                         Ok(parquet_files) as std::result::Result<_, Error>
                     })
                     .await
-                    .expect("retry forever");
-
-                parquet_files
+                    .expect("retry forever")
             }
         }));
         let loader = Arc::new(MetricsLoader::new(
