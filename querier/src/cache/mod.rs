@@ -12,13 +12,13 @@ use self::{
 
 pub mod namespace;
 pub mod partition;
+pub mod parquet_file;
 pub mod processed_tombstones;
 mod ram;
 pub mod table;
 
 #[cfg(test)]
 mod test_util;
-mod parquet_file;
 
 /// Caches request to the [`Catalog`].
 #[derive(Debug)]

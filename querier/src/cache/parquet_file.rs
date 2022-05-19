@@ -5,15 +5,17 @@ use cache_system::{
     backend::{
         lru::{LruBackend, ResourcePool},
         resource_consumption::FunctionEstimator,
-        ttl::{OptionalValueTtlProvider, TtlBackend},
+        ttl::{TtlBackend, ValueTtlProvider},
     },
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
 };
-use data_types::{NamespaceSchema, TableId};
-use iox_catalog::interface::{get_schema_by_name, Catalog};
+use data_types::{TableId, ParquetFileWithMetadata};
+use iox_catalog::interface::Catalog;
 use iox_time::TimeProvider;
+use parquet_file::chunk::DecodedParquetFile;
 use std::{collections::HashMap, mem::size_of_val, sync::Arc, time::Duration};
+use snafu::{Snafu, ResultExt};
 
 use super::ram::RamSize;
 
@@ -23,19 +25,35 @@ pub const TTL: Duration = Duration::from_secs(60);
 
 const CACHE_ID: &str = "parquet_file";
 
+#[derive(Debug, Snafu)]
+#[allow(missing_copy_implementations, missing_docs)]
+pub enum Error {
+    #[snafu(display("{}", source))]
+    Catalog { source: iox_catalog::interface::Error },
+}
 
-struct CachedParquetFile {
+/// A specialized `Error` for errors (needed to make Backoff happy for some reason)
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+
+#[derive(Debug)]
+/// Holds decoded catalog information about a parquet file
+pub struct CachedParquetFile {
     file: DecodedParquetFile
 }
 
 impl CachedParquetFile {
-    fn size(&self) -> RamSize {
+    fn new(parquet_file_with_metadata: ParquetFileWithMetadata) -> Self {
+        Self {
+            file: DecodedParquetFile::new(parquet_file_with_metadata)
+        }
+    }
+
+    fn size(&self) -> usize {
         // todo
-        RamSize(42)
+        42
     }
 }
-
-
 
 /// Cache for parquet file information with metadata.
 ///
@@ -62,22 +80,22 @@ impl ParquetFileCache {
                 let parquet_files = Backoff::new(&backoff_config)
                     .retry_all_errors("get parquet_files", || async {
 
-                        let mut txn = catalog.start_transaction().await?;
-
-                        let parquet_files: Vec<_> = txn
+                        let parquet_files: Vec<_> = catalog
+                            .repositories()
+                            .await
                             .parquet_files()
-                            .list_by_table_not_to_delete_with_metadata(self.id)
-                            .await?
+                            .list_by_table_not_to_delete_with_metadata(table_id)
+                            .await
+                            .context(CatalogSnafu)?
                             .into_iter()
-                            .map(|parquet_file_with_metadata| {
-                                Arc::new(DecodedParquetFile::new(parquet_file_with_metadata))
-                            })
+                            .map(CachedParquetFile::new)
+                            .map(Arc::new)
                             .collect();
 
-                        Ok(parquet_files)
+                        Ok(parquet_files) as std::result::Result<_, Error>
                     })
                     .await
-                    .expect("retry forever")?;
+                    .expect("retry forever");
 
                 parquet_files
             }
@@ -91,9 +109,7 @@ impl ParquetFileCache {
 
         let backend = Box::new(TtlBackend::new(
             Box::new(HashMap::new()),
-            Arc::new(TtlProvider::new(
-                Some(TTL),
-            )),
+            Arc::new(ValueTtlProvider::new(TTL)),
             Arc::clone(&time_provider),
         ));
 
@@ -103,12 +119,12 @@ impl ParquetFileCache {
             Arc::clone(&ram_pool),
             CACHE_ID,
             Arc::new(FunctionEstimator::new(
-                |k: TableId, v: &Vec<Arc<CachedParquetFile>>| {
+                |k: &TableId, v: &Vec<Arc<CachedParquetFile>>| {
                     RamSize(
                         size_of_val(k)
                             + size_of_val(v)
                             + v.len()
-                            + v.iter().map(|f| sizeof_val(f) + f.size()).sum(),
+                            + v.iter().map(|f| size_of_val(f) + f.size()).sum::<usize>(),
                     )
                 },
             )),
@@ -120,182 +136,13 @@ impl ParquetFileCache {
     }
 
     /// Get list of cached parquet files, by table id
-    pub async fn files(&self, table_id: TableId) ->  Vec<Arc<CachedParquetFile>>> {
-        self.cache.get(name).await
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CachedNamespace {
-    schema: Arc<NamespaceSchema>,
-}
-
-impl CachedNamespace {
-    /// RAM-bytes EXCLUDING `self`.
-    fn size(&self) -> usize {
-        self.schema.size() - size_of_val(&self.schema)
+    pub async fn files(&self, table_id: TableId) ->  Vec<Arc<CachedParquetFile>> {
+        self.cache.get(table_id).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
 
-    use crate::cache::{ram::test_util::test_ram_pool, test_util::assert_histogram_metric_count};
-    use data_types::{ColumnSchema, ColumnType, TableSchema};
-    use iox_tests::util::TestCatalog;
 
-    use super::*;
-
-    #[tokio::test]
-    async fn test_schema() {
-        let catalog = TestCatalog::new();
-
-        let ns1 = catalog.create_namespace("ns1").await;
-        let ns2 = catalog.create_namespace("ns2").await;
-        assert_ne!(ns1.namespace.id, ns2.namespace.id);
-
-        let table11 = ns1.create_table("table1").await;
-        let table12 = ns1.create_table("table2").await;
-        let table21 = ns2.create_table("table1").await;
-
-        let col111 = table11.create_column("col1", ColumnType::I64).await;
-        let col112 = table11.create_column("col2", ColumnType::Tag).await;
-        let col113 = table11.create_column("col3", ColumnType::Time).await;
-        let col121 = table12.create_column("col1", ColumnType::F64).await;
-        let col122 = table12.create_column("col2", ColumnType::Time).await;
-        let col211 = table21.create_column("col1", ColumnType::Time).await;
-
-        let cache = ParquetFileCache::new(
-            catalog.catalog(),
-            BackoffConfig::default(),
-            catalog.time_provider(),
-            &catalog.metric_registry(),
-            test_ram_pool(),
-        );
-
-        let schema1_a = cache.schema(Arc::from(String::from("ns1"))).await.unwrap();
-        let expected_schema_1 = NamespaceSchema {
-            id: ns1.namespace.id,
-            kafka_topic_id: ns1.namespace.kafka_topic_id,
-            query_pool_id: ns1.namespace.query_pool_id,
-            tables: BTreeMap::from([
-                (
-                    String::from("table1"),
-                    TableSchema {
-                        id: table11.table.id,
-                        columns: BTreeMap::from([
-                            (
-                                String::from("col1"),
-                                ColumnSchema {
-                                    id: col111.column.id,
-                                    column_type: ColumnType::I64,
-                                },
-                            ),
-                            (
-                                String::from("col2"),
-                                ColumnSchema {
-                                    id: col112.column.id,
-                                    column_type: ColumnType::Tag,
-                                },
-                            ),
-                            (
-                                String::from("col3"),
-                                ColumnSchema {
-                                    id: col113.column.id,
-                                    column_type: ColumnType::Time,
-                                },
-                            ),
-                        ]),
-                    },
-                ),
-                (
-                    String::from("table2"),
-                    TableSchema {
-                        id: table12.table.id,
-                        columns: BTreeMap::from([
-                            (
-                                String::from("col1"),
-                                ColumnSchema {
-                                    id: col121.column.id,
-                                    column_type: ColumnType::F64,
-                                },
-                            ),
-                            (
-                                String::from("col2"),
-                                ColumnSchema {
-                                    id: col122.column.id,
-                                    column_type: ColumnType::Time,
-                                },
-                            ),
-                        ]),
-                    },
-                ),
-            ]),
-        };
-        assert_eq!(schema1_a.as_ref(), &expected_schema_1);
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 1);
-
-        let schema2 = cache.schema(Arc::from(String::from("ns2"))).await.unwrap();
-        let expected_schema_2 = NamespaceSchema {
-            id: ns2.namespace.id,
-            kafka_topic_id: ns2.namespace.kafka_topic_id,
-            query_pool_id: ns2.namespace.query_pool_id,
-            tables: BTreeMap::from([(
-                String::from("table1"),
-                TableSchema {
-                    id: table21.table.id,
-                    columns: BTreeMap::from([(
-                        String::from("col1"),
-                        ColumnSchema {
-                            id: col211.column.id,
-                            column_type: ColumnType::Time,
-                        },
-                    )]),
-                },
-            )]),
-        };
-        assert_eq!(schema2.as_ref(), &expected_schema_2);
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 2);
-
-        let schema1_b = cache.schema(Arc::from(String::from("ns1"))).await.unwrap();
-        assert!(Arc::ptr_eq(&schema1_a, &schema1_b));
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 2);
-
-        // cache timeout
-        catalog.mock_time_provider().inc(TTL);
-
-        let schema1_c = cache.schema(Arc::from(String::from("ns1"))).await.unwrap();
-        assert_eq!(schema1_c.as_ref(), schema1_a.as_ref());
-        assert!(!Arc::ptr_eq(&schema1_a, &schema1_c));
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 3);
-    }
-
-    #[tokio::test]
-    async fn test_schema_non_existing() {
-        let catalog = TestCatalog::new();
-
-        let cache = ParquetFileCache::new(
-            catalog.catalog(),
-            BackoffConfig::default(),
-            catalog.time_provider(),
-            &catalog.metric_registry(),
-            test_ram_pool(),
-        );
-
-        let none = cache.schema(Arc::from(String::from("foo"))).await;
-        assert!(none.is_none());
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 1);
-
-        let none = cache.schema(Arc::from(String::from("foo"))).await;
-        assert!(none.is_none());
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 1);
-
-        // cache timeout
-        catalog.mock_time_provider().inc(TTL_NON_EXISTING);
-
-        let none = cache.schema(Arc::from(String::from("foo"))).await;
-        assert!(none.is_none());
-        assert_histogram_metric_count(&catalog.metric_registry, "namespace_get_by_name", 2);
-    }
 }

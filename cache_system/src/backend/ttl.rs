@@ -63,7 +63,8 @@ where
     _k: PhantomData<fn() -> K>,
     _v: PhantomData<fn() -> V>,
 
-    ttl: Option<Duration>,
+    /// The value to return
+    ttl: Duration,
 }
 
 impl<K, V> std::fmt::Debug for ValueTtlProvider<K, V> {
@@ -80,7 +81,8 @@ where
     K: 'static,
     V: 'static,
 {
-    pub fn new(ttl: Option<Duration>) -> Self {
+    /// Create new provider with the given TTL value
+    pub fn new(ttl: Duration) -> Self {
         Self {
             _k: PhantomData::default(),
             _v: PhantomData::default(),
@@ -95,7 +97,7 @@ impl<K, V> TtlProvider for ValueTtlProvider<K, V> {
     type V = V;
 
     fn expires_in(&self, _k: &Self::K, _v: &Self::V) -> Option<Duration> {
-        self.ttl
+        Some(self.ttl)
     }
 }
 
