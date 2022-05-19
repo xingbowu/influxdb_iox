@@ -52,7 +52,6 @@ impl<K, V> TtlProvider for NeverTtlProvider<K, V> {
     }
 }
 
-
 /// [`TtlProvider`] that returns a specific value
 pub struct ValueTtlProvider<K, V>
 where
@@ -76,7 +75,7 @@ impl<K, V> std::fmt::Debug for ValueTtlProvider<K, V> {
 }
 
 /// [`TtlProvider`] that returns a specific value
-impl <K, V> ValueTtlProvider<K, V>
+impl<K, V> ValueTtlProvider<K, V>
 where
     K: 'static,
     V: 'static,
@@ -91,7 +90,6 @@ where
     }
 }
 
-
 impl<K, V> TtlProvider for ValueTtlProvider<K, V> {
     type K = K;
     type V = V;
@@ -100,8 +98,6 @@ impl<K, V> TtlProvider for ValueTtlProvider<K, V> {
         Some(self.ttl)
     }
 }
-
-
 
 /// [`TtlProvider`] that returns different values for `None`/`Some(...)` values.
 pub struct OptionalValueTtlProvider<K, V>

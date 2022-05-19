@@ -10,18 +10,17 @@ use cache_system::{
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
 };
-use data_types::{TableId, ParquetFileWithMetadata};
+use data_types::{ParquetFileWithMetadata, TableId};
 use iox_catalog::interface::Catalog;
 use iox_time::TimeProvider;
 use parquet_file::chunk::DecodedParquetFile;
+use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, mem::size_of_val, sync::Arc, time::Duration};
-use snafu::{Snafu, ResultExt};
 
 use super::ram::RamSize;
 
 /// Duration to keep parquet files cached
 pub const TTL: Duration = Duration::from_secs(60);
-
 
 const CACHE_ID: &str = "parquet_file";
 
@@ -29,23 +28,25 @@ const CACHE_ID: &str = "parquet_file";
 #[allow(missing_copy_implementations, missing_docs)]
 pub enum Error {
     #[snafu(display("{}", source))]
-    Catalog { source: iox_catalog::interface::Error },
+    Catalog {
+        source: iox_catalog::interface::Error,
+    },
 }
 
 /// A specialized `Error` for errors (needed to make Backoff happy for some reason)
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-
 #[derive(Debug)]
 /// Holds decoded catalog information about a parquet file
 pub struct CachedParquetFile {
-    file: DecodedParquetFile
+    /// Parquet catalog information and decoded metadata
+    pub file: DecodedParquetFile,
 }
 
 impl CachedParquetFile {
     fn new(parquet_file_with_metadata: ParquetFileWithMetadata) -> Self {
         Self {
-            file: DecodedParquetFile::new(parquet_file_with_metadata)
+            file: DecodedParquetFile::new(parquet_file_with_metadata),
         }
     }
 
@@ -79,7 +80,6 @@ impl ParquetFileCache {
             async move {
                 let parquet_files = Backoff::new(&backoff_config)
                     .retry_all_errors("get parquet_files", || async {
-
                         let parquet_files: Vec<_> = catalog
                             .repositories()
                             .await
@@ -136,13 +136,50 @@ impl ParquetFileCache {
     }
 
     /// Get list of cached parquet files, by table id
-    pub async fn files(&self, table_id: TableId) ->  Vec<Arc<CachedParquetFile>> {
+    pub async fn files(&self, table_id: TableId) -> Vec<Arc<CachedParquetFile>> {
         self.cache.get(table_id).await
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use iox_tests::util::TestCatalog;
 
+    use crate::cache::ram::test_util::test_ram_pool;
 
+    #[tokio::test]
+    async fn test_parquet_chunks() {
+        let catalog = TestCatalog::new();
+
+        let ns = catalog.create_namespace("ns").await;
+        let table1 = ns.create_table("table1").await;
+        let sequencer1 = ns.create_sequencer(1).await;
+
+        let partition1 = table1
+            .with_sequencer(&sequencer1)
+            .create_partition("k")
+            .await;
+
+        let file = partition1.create_parquet_file("table1 foo=1 11").await;
+
+        let cache = ParquetFileCache::new(
+            catalog.catalog(),
+            BackoffConfig::default(),
+            catalog.time_provider(),
+            &catalog.metric_registry(),
+            test_ram_pool(),
+        );
+
+        let cached_files = cache.files(table1.table.id).await;
+
+        assert_eq!(cached_files.len(), 1);
+        let (expected_parquet_file, _meta) = file.parquet_file.split_off_metadata();
+        assert_eq!(cached_files[0].file.parquet_file, expected_parquet_file);
+    }
+
+    // TODO tests for multiple tables
+    // TODO tests for size
+
+    // TODO tests for errors (table doesn't exist..)
 }
