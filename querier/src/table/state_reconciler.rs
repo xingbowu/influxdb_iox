@@ -1,4 +1,4 @@
-//! Logic to reconcile the state that the querier got the from catalog and from the ingester.
+//! Logic to reconcile the catalog and ingester state
 //!
 //! # Usage
 //!
@@ -11,91 +11,14 @@
 //! 3. **Pruning:** Call [`filter_parquet_files`] and [`tombstone_exclude_list`] to filter out
 //!    files and tombstones that are too new (i.e. were created between step 1 and 2).
 
-use crate::ingester::IngesterPartition;
-use data_types::{
-    ParquetFileWithMetadata, PartitionId, SequenceNumber, SequencerId, Tombstone, TombstoneId,
-};
+mod interface;
+
+use data_types::{PartitionId, SequencerId, TombstoneId};
 use observability_deps::tracing::debug;
 use snafu::Snafu;
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Deref,
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
-/// Information about an ingester partition.
-///
-/// This is mostly the same as [`IngesterPartition`] but allows easier mocking.
-pub trait IngesterPartitionInfo {
-    fn partition_id(&self) -> PartitionId;
-    fn sequencer_id(&self) -> SequencerId;
-    fn parquet_max_sequence_number(&self) -> Option<SequenceNumber>;
-    fn tombstone_max_sequence_number(&self) -> Option<SequenceNumber>;
-}
-
-impl IngesterPartitionInfo for Arc<IngesterPartition> {
-    fn partition_id(&self) -> PartitionId {
-        self.deref().partition_id()
-    }
-
-    fn sequencer_id(&self) -> SequencerId {
-        self.deref().sequencer_id()
-    }
-
-    fn parquet_max_sequence_number(&self) -> Option<SequenceNumber> {
-        self.deref().parquet_max_sequence_number()
-    }
-
-    fn tombstone_max_sequence_number(&self) -> Option<SequenceNumber> {
-        self.deref().tombstone_max_sequence_number()
-    }
-}
-
-/// Information about a parquet file.
-///
-/// This is mostly the same as [`ParquetFileWithMetadata`] but allows easier mocking.
-pub trait ParquetFileInfo {
-    fn partition_id(&self) -> PartitionId;
-    fn min_sequence_number(&self) -> SequenceNumber;
-    fn max_sequence_number(&self) -> SequenceNumber;
-}
-
-impl ParquetFileInfo for ParquetFileWithMetadata {
-    fn partition_id(&self) -> PartitionId {
-        self.partition_id
-    }
-
-    fn min_sequence_number(&self) -> SequenceNumber {
-        self.min_sequence_number
-    }
-
-    fn max_sequence_number(&self) -> SequenceNumber {
-        self.max_sequence_number
-    }
-}
-
-/// Information about a tombstone.
-///
-/// This is mostly the same as [`Tombstone`] but allows easier mocking.
-pub trait TombstoneInfo {
-    fn id(&self) -> TombstoneId;
-    fn sequencer_id(&self) -> SequencerId;
-    fn sequence_number(&self) -> SequenceNumber;
-}
-
-impl TombstoneInfo for Tombstone {
-    fn id(&self) -> TombstoneId {
-        self.id
-    }
-
-    fn sequencer_id(&self) -> SequencerId {
-        self.sequencer_id
-    }
-
-    fn sequence_number(&self) -> SequenceNumber {
-        self.sequence_number
-    }
-}
+use self::interface::{IngesterPartitionInfo, ParquetFileInfo, TombstoneInfo};
 
 #[derive(Snafu, Debug)]
 pub enum FilterParquetError {
@@ -227,6 +150,7 @@ where
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
+    use data_types::SequenceNumber;
 
     use super::*;
 
