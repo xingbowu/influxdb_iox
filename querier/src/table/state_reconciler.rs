@@ -204,7 +204,7 @@ impl Reconciler {
 /// Note that the querier (and this method) do NOT care about the actual age of the parquet files, since the compactor
 /// is free to to process files at any given moment (e.g. to combine them or to materialize tombstones). However if the
 /// compactor combines files in a way that the querier would need to split it into "desired" data and "too new" data
-/// then we will currently bail out with [`FilterParquetError::CompactorConflict`].
+/// then we will currently bail out with [`ReconcileError`].
 fn filter_parquet_files<I, P>(
     ingester_partitions: &[I],
     parquet_files: Vec<P>,
