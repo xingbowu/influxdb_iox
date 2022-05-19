@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use self::{
     namespace::NamespaceCache, partition::PartitionCache,
-    processed_tombstones::ProcessedTombstonesCache, ram::RamSize, table::TableCache,
+    processed_tombstones::ProcessedTombstonesCache, ram::RamSize, table::TableCache, parquet_file::ParquetFileCache, tombstones::TombstoneCache,
 };
 
 pub mod namespace;
@@ -37,7 +37,13 @@ pub struct CatalogCache {
     namespace_cache: NamespaceCache,
 
     /// Processed tombstone cache.
-    processed_tombstones: ProcessedTombstonesCache,
+    processed_tombstones_cache: ProcessedTombstonesCache,
+
+    /// Parquet file cache
+    parquet_file_cache: ParquetFileCache,
+
+    /// tombstone cache
+    tombstone_cache: TombstoneCache,
 
     /// Time provider.
     time_provider: Arc<dyn TimeProvider>,
@@ -59,7 +65,7 @@ impl CatalogCache {
             Arc::clone(&metric_registry),
         ));
 
-        let namespace_cache = NamespaceCache::new(
+        let partition_cache = PartitionCache::new(
             Arc::clone(&catalog),
             backoff_config.clone(),
             Arc::clone(&time_provider),
@@ -73,14 +79,28 @@ impl CatalogCache {
             &metric_registry,
             Arc::clone(&ram_pool),
         );
-        let partition_cache = PartitionCache::new(
+        let namespace_cache = NamespaceCache::new(
             Arc::clone(&catalog),
             backoff_config.clone(),
             Arc::clone(&time_provider),
             &metric_registry,
             Arc::clone(&ram_pool),
         );
-        let processed_tombstones = ProcessedTombstonesCache::new(
+        let processed_tombstones_cache = ProcessedTombstonesCache::new(
+            Arc::clone(&catalog),
+            backoff_config.clone(),
+            Arc::clone(&time_provider),
+            &metric_registry,
+            Arc::clone(&ram_pool),
+        );
+        let parquet_file_cache = ParquetFileCache::new(
+            Arc::clone(&catalog),
+            backoff_config.clone(),
+            Arc::clone(&time_provider),
+            &metric_registry,
+            Arc::clone(&ram_pool),
+        );
+        let tombstone_cache = TombstoneCache::new(
             Arc::clone(&catalog),
             backoff_config,
             Arc::clone(&time_provider),
@@ -88,12 +108,15 @@ impl CatalogCache {
             Arc::clone(&ram_pool),
         );
 
+
         Self {
             catalog,
             partition_cache,
             table_cache,
             namespace_cache,
-            processed_tombstones,
+            processed_tombstones_cache,
+            parquet_file_cache,
+            tombstone_cache,
             time_provider,
         }
     }
@@ -125,6 +148,16 @@ impl CatalogCache {
 
     /// Processed tombstone cache.
     pub(crate) fn processed_tombstones(&self) -> &ProcessedTombstonesCache {
-        &self.processed_tombstones
+        &self.processed_tombstones_cache
+    }
+
+    /// Parquet file cache.
+    pub(crate) fn parquet_file(&self) -> &ParquetFileCache {
+        &self.parquet_file_cache
+    }
+
+    /// Parquet file cache.
+    pub(crate) fn tombstone(&self) -> &TombstoneCache {
+        &self.tombstone_cache
     }
 }
