@@ -38,6 +38,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Holds decoded catalog information about a parquet file
 #[derive(Debug, Clone)]
 pub struct CachedTombstones {
+    /// Tombestones that were cached in the catalog
     pub tombstones: Vec<Arc<Tombstone>>,
 }
 
@@ -139,39 +140,35 @@ mod tests {
 
     use crate::cache::ram::test_util::test_ram_pool;
 
-    // #[tokio::test]
-    // async fn test_parquet_chunks() {
-    //     let catalog = TestCatalog::new();
+    #[tokio::test]
+    async fn test_tombstones() {
+        let catalog = TestCatalog::new();
 
-    //     let ns = catalog.create_namespace("ns").await;
-    //     let table1 = ns.create_table("table1").await;
-    //     let sequencer1 = ns.create_sequencer(1).await;
+        let ns = catalog.create_namespace("ns").await;
+        let table1 = ns.create_table("table1").await;
+        let sequencer1 = ns.create_sequencer(1).await;
 
-    //     let partition1 = table1
-    //         .with_sequencer(&sequencer1)
-    //         .create_partition("k")
-    //         .await;
+        let table_and_sequencer = table1.with_sequencer(&sequencer1);
 
-    //     let file = partition1.create_parquet_file("table1 foo=1 11")
-    //         .await;
+        let tombstone1 = table_and_sequencer
+            .create_tombstone(7, 1, 100, "foo=1")
+            .await;
 
-    //     let cache = ParquetFileCache::new(
-    //         catalog.catalog(),
-    //         BackoffConfig::default(),
-    //         catalog.time_provider(),
-    //         &catalog.metric_registry(),
-    //         test_ram_pool(),
-    //     );
+        let cache = TombstoneCache::new(
+            catalog.catalog(),
+            BackoffConfig::default(),
+            catalog.time_provider(),
+            &catalog.metric_registry(),
+            test_ram_pool(),
+        );
 
-    //     let cached_files = cache.files(table1.table.id).await;
+        let cached_tombstones = cache.tombstones(table1.table.id).await;
 
-    //     assert_eq!(cached_files.len(), 1);
-    //     let (expected_parquet_file, _meta) = file.parquet_file.split_off_metadata();
-    //     assert_eq!(cached_files[0].file.parquet_file, expected_parquet_file);
+        assert_eq!(cached_tombstones.len(), 1);
+        assert_eq!(cached_tombstones[0].as_ref(), &tombstone1.tombstone);
+    }
 
-    // }
-
-    // TODO tests for multiple tables
+    // TODO tests for multiple tombestones
     // TODO tests for size
 
     // TODO tests for errors (table doesn't exist..)
