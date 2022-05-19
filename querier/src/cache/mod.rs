@@ -18,6 +18,7 @@ pub mod table;
 
 #[cfg(test)]
 mod test_util;
+mod parquet_file;
 
 /// Caches request to the [`Catalog`].
 #[derive(Debug)]

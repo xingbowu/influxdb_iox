@@ -52,6 +52,55 @@ impl<K, V> TtlProvider for NeverTtlProvider<K, V> {
     }
 }
 
+
+/// [`TtlProvider`] that returns a specific value
+pub struct ValueTtlProvider<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    // phantom data that is Send and Sync, see https://stackoverflow.com/a/50201389
+    _k: PhantomData<fn() -> K>,
+    _v: PhantomData<fn() -> V>,
+
+    ttl: Option<Duration>,
+}
+
+impl<K, V> std::fmt::Debug for ValueTtlProvider<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ValueTtlProvider")
+            .field("ttl", &self.ttl)
+            .finish_non_exhaustive()
+    }
+}
+
+/// [`TtlProvider`] that returns a specific value
+impl <K, V> ValueTtlProvider<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    pub fn new(ttl: Option<Duration>) -> Self {
+        Self {
+            _k: PhantomData::default(),
+            _v: PhantomData::default(),
+            ttl,
+        }
+    }
+}
+
+
+impl<K, V> TtlProvider for ValueTtlProvider<K, V> {
+    type K = K;
+    type V = V;
+
+    fn expires_in(&self, _k: &Self::K, _v: &Self::V) -> Option<Duration> {
+        self.ttl
+    }
+}
+
+
+
 /// [`TtlProvider`] that returns different values for `None`/`Some(...)` values.
 pub struct OptionalValueTtlProvider<K, V>
 where
