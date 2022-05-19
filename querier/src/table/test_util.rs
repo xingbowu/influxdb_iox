@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use backoff::BackoffConfig;
 use iox_catalog::interface::get_schema_by_name;
 use iox_tests::util::{TestCatalog, TestTable};
 use parquet_file::storage::ParquetStorage;
@@ -38,7 +37,6 @@ pub async fn querier_table(catalog: &Arc<TestCatalog>, table: &Arc<TestTable>) -
 
     QuerierTable::new(
         namespace_name,
-        BackoffConfig::default(),
         table.table.id,
         table.table.name.clone().into(),
         schema,

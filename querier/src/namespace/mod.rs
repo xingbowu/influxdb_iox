@@ -4,7 +4,6 @@ use crate::{
     cache::CatalogCache, chunk::ParquetChunkAdapter, ingester::IngesterConnection,
     query_log::QueryLog, table::QuerierTable,
 };
-use backoff::BackoffConfig;
 use data_types::{NamespaceId, NamespaceSchema};
 use iox_query::exec::Executor;
 use parquet_file::storage::ParquetStorage;
@@ -48,7 +47,6 @@ pub struct QuerierNamespace {
 impl QuerierNamespace {
     /// Create new namespace for given schema.
     pub fn new(
-        backoff_config: BackoffConfig,
         chunk_adapter: Arc<ParquetChunkAdapter>,
         schema: Arc<NamespaceSchema>,
         name: Arc<str>,
@@ -66,7 +64,6 @@ impl QuerierNamespace {
 
                 let table = Arc::new(QuerierTable::new(
                     Arc::clone(&name),
-                    backoff_config.clone(),
                     id,
                     Arc::clone(&table_name),
                     Arc::new(schema),
@@ -111,7 +108,6 @@ impl QuerierNamespace {
         let query_log = Arc::new(QueryLog::new(10, time_provider));
 
         Self::new(
-            BackoffConfig::default(),
             chunk_adapter,
             schema,
             name,

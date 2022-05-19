@@ -13,7 +13,7 @@
 
 mod interface;
 
-use data_types::{ParquetFileWithMetadata, PartitionId, SequencerId, Tombstone, TombstoneId};
+use data_types::{PartitionId, SequencerId, Tombstone, TombstoneId};
 use iox_query::QueryChunk;
 use observability_deps::tracing::debug;
 use snafu::Snafu;
@@ -22,7 +22,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::{chunk::ParquetChunkAdapter, tombstone::QuerierTombstone, IngesterPartition};
+use crate::{
+    cache::parquet_file::CachedParquetFile, chunk::ParquetChunkAdapter,
+    tombstone::QuerierTombstone, IngesterPartition,
+};
 
 use self::interface::{IngesterPartitionInfo, ParquetFileInfo, TombstoneInfo};
 
@@ -59,8 +62,8 @@ impl Reconciler {
     pub(crate) async fn reconcile(
         &self,
         ingester_partitions: Vec<Arc<IngesterPartition>>,
-        tombstones: Vec<Tombstone>,
-        parquet_files: Vec<ParquetFileWithMetadata>,
+        tombstones: Vec<Arc<Tombstone>>,
+        parquet_files: Vec<Arc<CachedParquetFile>>,
     ) -> Result<Vec<Arc<dyn QueryChunk>>, ReconcileError> {
         let tombstone_exclusion = tombstone_exclude_list(&ingester_partitions, &tombstones);
 
@@ -90,10 +93,10 @@ impl Reconciler {
 
         // convert parquet files and tombstones into QuerierChunks
         let mut parquet_chunks = Vec::with_capacity(parquet_files.len());
-        for parquet_file_with_metadata in parquet_files {
+        for cached_parquet_file in parquet_files {
             if let Some(chunk) = self
                 .chunk_adapter
-                .new_querier_chunk(parquet_file_with_metadata)
+                .new_querier_chunk(&cached_parquet_file.file)
                 .await
             {
                 parquet_chunks.push(chunk);

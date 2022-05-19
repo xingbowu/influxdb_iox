@@ -1,6 +1,6 @@
 //! Interface for reconciling Ingester and catalog state
 
-use crate::ingester::IngesterPartition;
+use crate::{cache::parquet_file::CachedParquetFile, ingester::IngesterPartition};
 use data_types::{
     ParquetFileWithMetadata, PartitionId, SequenceNumber, SequencerId, Tombstone, TombstoneId,
 };
@@ -57,6 +57,20 @@ impl ParquetFileInfo for ParquetFileWithMetadata {
     }
 }
 
+impl ParquetFileInfo for Arc<CachedParquetFile> {
+    fn partition_id(&self) -> PartitionId {
+        self.file.parquet_file.partition_id
+    }
+
+    fn min_sequence_number(&self) -> SequenceNumber {
+        self.file.parquet_file.min_sequence_number
+    }
+
+    fn max_sequence_number(&self) -> SequenceNumber {
+        self.file.parquet_file.max_sequence_number
+    }
+}
+
 /// Information about a tombstone.
 ///
 /// This is mostly the same as [`Tombstone`] but allows easier mocking.
@@ -67,6 +81,20 @@ pub trait TombstoneInfo {
 }
 
 impl TombstoneInfo for Tombstone {
+    fn id(&self) -> TombstoneId {
+        self.id
+    }
+
+    fn sequencer_id(&self) -> SequencerId {
+        self.sequencer_id
+    }
+
+    fn sequence_number(&self) -> SequenceNumber {
+        self.sequence_number
+    }
+}
+
+impl TombstoneInfo for Arc<Tombstone> {
     fn id(&self) -> TombstoneId {
         self.id
     }

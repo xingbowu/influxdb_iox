@@ -5,8 +5,8 @@ use crate::{
     ingester::{self, IngesterPartition},
     IngesterConnection,
 };
-use backoff::{Backoff, BackoffConfig};
 use data_types::{PartitionId, TableId};
+use futures::join;
 use iox_query::{provider::ChunkPruner, QueryChunk};
 use observability_deps::tracing::debug;
 use predicate::Predicate;
@@ -55,9 +55,6 @@ pub struct QuerierTable {
     /// Namespace the table is in
     namespace_name: Arc<str>,
 
-    /// Backoff config for IO operations.
-    backoff_config: BackoffConfig,
-
     /// Table name.
     table_name: Arc<str>,
 
@@ -81,7 +78,6 @@ impl QuerierTable {
     /// Create new table.
     pub fn new(
         namespace_name: Arc<str>,
-        backoff_config: BackoffConfig,
         id: TableId,
         table_name: Arc<str>,
         schema: Arc<Schema>,
@@ -96,7 +92,6 @@ impl QuerierTable {
 
         Self {
             namespace_name,
-            backoff_config,
             table_name,
             id,
             schema,
@@ -128,8 +123,21 @@ impl QuerierTable {
     pub async fn chunks(&self, predicate: &Predicate) -> Result<Vec<Arc<dyn QueryChunk>>> {
         debug!(?predicate, namespace=%self.namespace_name, table_name=%self.table_name(), "Fetching all chunks");
 
-        // ask ingesters for data
-        let ingester_partitions = self.ingester_partitions(predicate).await?;
+        // ask ingesters for data, and get catalog contents
+        let (ingester_partitions, parquet_files, tombstones) = join!(
+            self.ingester_partitions(predicate),
+            self.chunk_adapter
+                .catalog_cache()
+                .parquet_file()
+                .files(self.id()),
+            self.chunk_adapter
+                .catalog_cache()
+                .tombstone()
+                .tombstones(self.id()),
+        );
+
+        // Return errors
+        let ingester_partitions = ingester_partitions?;
 
         debug!(
             namespace=%self.namespace_name,
@@ -137,37 +145,6 @@ impl QuerierTable {
             num_ingester_partitions=%ingester_partitions.len(),
             "Ingester partitions fetched"
         );
-
-        // get parquet files and tombstones in a single catalog transaction
-        // IMPORTANT: this needs to happen AFTER gathering data from the ingesters
-        // TODO: figure out some form of caching
-        let (parquet_files, tombstones) = Backoff::new(&self.backoff_config)
-            .retry_all_errors::<_, _, _, iox_catalog::interface::Error>(
-                "get parquet files and tombstones for table",
-                || async {
-                    let mut txn = self.chunk_adapter.catalog().start_transaction().await?;
-
-                    let parquet_files = txn
-                        .parquet_files()
-                        .list_by_table_not_to_delete_with_metadata(self.id)
-                        .await?;
-
-                    debug!(
-                        ?parquet_files,
-                        namespace=%self.namespace_name,
-                        table_name=%self.table_name(),
-                        "Parquet files from catalog"
-                    );
-
-                    let tombstones = txn.tombstones().list_by_table(self.id).await?;
-
-                    txn.commit().await?;
-
-                    Ok((parquet_files, tombstones))
-                },
-            )
-            .await
-            .expect("retry forever");
 
         self.reconciler
             .reconcile(ingester_partitions, tombstones, parquet_files)

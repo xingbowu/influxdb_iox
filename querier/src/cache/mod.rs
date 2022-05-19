@@ -6,8 +6,9 @@ use iox_time::TimeProvider;
 use std::sync::Arc;
 
 use self::{
-    namespace::NamespaceCache, partition::PartitionCache,
-    processed_tombstones::ProcessedTombstonesCache, ram::RamSize, table::TableCache, parquet_file::ParquetFileCache, tombstones::TombstoneCache,
+    namespace::NamespaceCache, parquet_file::ParquetFileCache, partition::PartitionCache,
+    processed_tombstones::ProcessedTombstonesCache, ram::RamSize, table::TableCache,
+    tombstones::TombstoneCache,
 };
 
 pub mod namespace;
@@ -107,7 +108,6 @@ impl CatalogCache {
             &metric_registry,
             Arc::clone(&ram_pool),
         );
-
 
         Self {
             catalog,
