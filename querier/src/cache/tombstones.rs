@@ -38,7 +38,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Holds decoded catalog information about a parquet file
 #[derive(Debug, Clone)]
 pub struct CachedTombstones {
-    /// Tombestones that were cached in the catalog
+    /// Tombstones that were cached in the catalog
     pub tombstones: Vec<Arc<Tombstone>>,
 }
 
