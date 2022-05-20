@@ -306,9 +306,23 @@ where
         }
     }
 
-    /// Forceably "remove" a key (aka remove it from the shared backend)
-    pub fn force_remove(&self, k: &K) {
-        self.inner_backend.lock().remove(k)
+    /// "remove" a key (aka remove it from the shared backend) if the
+    /// specified predicate is true. If the key is removed return
+    /// true, otherwise return false
+    ///
+    /// Note that the predicate function is called while the lock is
+    /// held (and thus the inner backend can't be concurrently accessed
+    pub fn remove_if<P>(&self, k: &K, predicate: P) -> bool
+    where
+        P: Fn(Option<V>) -> bool,
+    {
+        let mut inner_backend = self.inner_backend.lock();
+        if predicate(inner_backend.get(k)) {
+            inner_backend.remove(k);
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -68,6 +68,14 @@ impl CachedParquetFiles {
         // todo
         42
     }
+
+    /// Returns the greatest parquet sequence number stored in this cache entry
+    pub(crate) fn max_parquet_sequence_number(&self) -> Option<SequenceNumber> {
+        self.files
+            .iter()
+            .map(|f| f.parquet_file.max_sequence_number)
+            .max()
+    }
 }
 
 /// Cache for parquet file information with metadata.
@@ -158,7 +166,7 @@ impl ParquetFileCache {
 
     /// Mark the entry for table_id as expired (and needs a refresh)
     pub fn expire(&self, table_id: TableId) {
-        self.backend.force_remove(&table_id)
+        self.backend.remove_if(&table_id, |_| true);
     }
 
     /// Clear the parquet file cache if it does not know about data up
@@ -175,9 +183,17 @@ impl ParquetFileCache {
         max_parquet_sequence_number: Option<SequenceNumber>,
     ) -> bool {
         if let Some(max_parquet_sequence_number) = max_parquet_sequence_number {
-            unimplemented!("TODO make the get / remove part of the same lock hold");
-            self.backend.force_remove(&table_id);
-            true
+            // check backend cache to see if the maximum sequence
+            // number desired is less than what we know about
+            self.backend.remove_if(&table_id, |maybe_cached_file| {
+                let max_cached = maybe_cached_file.and_then(|f| f.max_parquet_sequence_number());
+
+                if let Some(max_cached) = max_cached {
+                    max_cached < max_parquet_sequence_number
+                } else {
+                    false
+                }
+            })
         } else {
             false
         }

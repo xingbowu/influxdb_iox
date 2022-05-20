@@ -137,7 +137,7 @@ impl TombstoneCache {
 
     /// Mark the entry for table_id as expired / needs a refresh
     pub fn expire(&self, table_id: TableId) {
-        self.backend.force_remove(&table_id)
+        self.backend.remove_if(&table_id, |_| true);
     }
 }
 

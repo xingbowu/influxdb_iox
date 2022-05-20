@@ -83,8 +83,10 @@ impl Reconciler {
 
         let parquet_files = filter_parquet_files(&ingester_partitions, parquet_files.vec())?;
 
+        let parquet_ids: Vec<_> = parquet_files.iter().map(|f| f.parquet_file.id).collect();
+
         debug!(
-            ?parquet_files,
+            ?parquet_ids,
             namespace=%self.namespace_name(),
             table_name=%self.table_name(),
             "Parquet files after filtering"
