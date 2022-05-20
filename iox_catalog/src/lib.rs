@@ -185,7 +185,7 @@ pub async fn create_or_get_default_records(
             .sequencers()
             .create_or_get(&kafka_topic, KafkaPartition::new(partition))
             .await?;
-        sequencers.insert(sequencer.id, sequencer);
+        sequencers.insert(sequencer.id(), sequencer);
     }
 
     Ok((kafka_topic, query_pool, sequencers))

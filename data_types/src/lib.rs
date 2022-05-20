@@ -125,25 +125,13 @@ impl ColumnId {
 /// "kafka partition".
 ///
 /// <https://github.com/influxdata/influxdb_iox/issues/4237>
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
-#[sqlx(transparent)]
-pub struct SequencerId(i64);
+pub type SequencerId = (KafkaTopicId, KafkaPartition);
 
-#[allow(missing_docs)]
-impl SequencerId {
-    pub fn new(v: i64) -> Self {
-        Self(v)
-    }
-    pub fn get(&self) -> i64 {
-        self.0
-    }
-}
-
-impl std::fmt::Display for SequencerId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+// impl std::fmt::Display for SequencerId {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         write!(f, "{}", self.0)
+//     }
+// }
 
 /// The kafka partition identifier. This is in the actual Kafka cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
@@ -624,8 +612,6 @@ pub fn column_type_from_field(field_value: &FieldValue) -> ColumnType {
 /// kafka topic and partition (enforced via uniqueness constraint).
 #[derive(Debug, Copy, Clone, PartialEq, sqlx::FromRow)]
 pub struct Sequencer {
-    /// the id of the sequencer
-    pub id: SequencerId,
     /// the topic the sequencer is reading from
     pub kafka_topic_id: KafkaTopicId,
     /// the kafka partition the sequencer is reading from
@@ -635,6 +621,13 @@ pub struct Sequencer {
     /// with a higher sequence number than this. However, all data with a sequence number
     /// lower than this must have been persisted to Parquet.
     pub min_unpersisted_sequence_number: i64,
+}
+
+impl Sequencer {
+    /// the id of the sequencer
+    pub fn id(self) -> SequencerId {
+        (self.kafka_topic_id, self.kafka_partition)
+    }
 }
 
 /// Data object for a partition. The combination of sequencer, table and key are unique (i.e. only

@@ -833,22 +833,25 @@ WHERE namespace_id = $1;
     ) -> Result<Option<TablePersistInfo>> {
         let rec = sqlx::query_as::<_, TablePersistInfo>(
             r#"
-WITH tid as (SELECT id FROM table_name WHERE name = $2 AND namespace_id = $3)
-SELECT $1 as sequencer_id, id as table_id,
+WITH tid as (SELECT id FROM table_name WHERE name = $3 AND namespace_id = $4)
+SELECT $1 as kafka_topic_id, $2 as kafka_partition, id as table_id,
        tombstone.sequence_number as tombstone_max_sequence_number
 FROM tid
 LEFT JOIN (
   SELECT tombstone.table_id, sequence_number
   FROM tombstone
-  WHERE sequencer_id = $1 AND tombstone.table_id = (SELECT id FROM tid)
+  WHERE kafka_topic_id = $1
+    AND kafka_partition = $2
+    AND tombstone.table_id = (SELECT id FROM tid)
   ORDER BY sequence_number DESC
   LIMIT 1
 ) tombstone ON tombstone.table_id = tid.id
             "#,
         )
-        .bind(&sequencer_id) // $1
-        .bind(&table_name) // $2
-        .bind(&namespace_id) // $3
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $2
+        .bind(&table_name) // $3
+        .bind(&namespace_id) // $4
         .fetch_one(&mut self.inner)
         .await;
 
@@ -1074,10 +1077,11 @@ WHERE kafka_topic_id = $1
         sequence_number: SequenceNumber,
     ) -> Result<()> {
         let _ = sqlx::query(
-            r#"UPDATE sequencer SET min_unpersisted_sequence_number = $1 WHERE id = $2;"#,
+            r#"UPDATE sequencer SET min_unpersisted_sequence_number = $1 WHERE kafka_topic_id = $2 AND kafka_partition = $3;"#,
         )
         .bind(&sequence_number.get()) // $1
-        .bind(&sequencer_id) // $2
+            .bind(&sequencer_id.0) // $2
+            .bind(&sequencer_id.1) // $3
         .execute(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })?;
@@ -1097,17 +1101,18 @@ impl PartitionRepo for PostgresTxn {
         let v = sqlx::query_as::<_, Partition>(
             r#"
 INSERT INTO partition
-    ( partition_key, sequencer_id, table_id )
+    ( partition_key, kafka_topic_id, kafka_partition, table_id, sequencer_id )
 VALUES
-    ( $1, $2, $3 )
+    ( $1, $2, $3, $4, 0 )
 ON CONFLICT ON CONSTRAINT partition_key_unique
 DO UPDATE SET partition_key = partition.partition_key
 RETURNING *;
         "#,
         )
         .bind(key) // $1
-        .bind(&sequencer_id) // $2
-        .bind(&table_id) // $3
+        .bind(&sequencer_id.0) // $2
+        .bind(&sequencer_id.1) // $3
+        .bind(&table_id) // $4
         .fetch_one(&mut self.inner)
         .await
         .map_err(|e| {
@@ -1146,11 +1151,14 @@ RETURNING *;
     }
 
     async fn list_by_sequencer(&mut self, sequencer_id: SequencerId) -> Result<Vec<Partition>> {
-        sqlx::query_as::<_, Partition>(r#"SELECT * FROM partition WHERE sequencer_id = $1;"#)
-            .bind(&sequencer_id) // $1
-            .fetch_all(&mut self.inner)
-            .await
-            .map_err(|e| Error::SqlxError { source: e })
+        sqlx::query_as::<_, Partition>(
+            r#"SELECT * FROM partition WHERE kafka_topic_id = $1 AND kafka_partition = $2;"#,
+        )
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $1
+        .fetch_all(&mut self.inner)
+        .await
+        .map_err(|e| Error::SqlxError { source: e })
     }
 
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Partition>> {
@@ -1204,7 +1212,7 @@ WHERE partition.id = $1;
         let table_name = info.get("table_name");
         let partition = Partition {
             id: info.get("id"),
-            sequencer_id: info.get("sequencer_id"),
+            sequencer_id: info.get("sequencer_id"), // xxx
             table_id: info.get("table_id"),
             partition_key: info.get("partition_key"),
             sort_key: info.get("sort_key"),
@@ -1258,20 +1266,21 @@ impl TombstoneRepo for PostgresTxn {
         let v = sqlx::query_as::<_, Tombstone>(
             r#"
 INSERT INTO tombstone
-    ( table_id, sequencer_id, sequence_number, min_time, max_time, serialized_predicate )
+    ( table_id, kafka_topic_id, kafka_partition, sequence_number, min_time, max_time, serialized_predicate )
 VALUES
-    ( $1, $2, $3, $4, $5, $6 )
+    ( $1, $2, $3, $4, $5, $6, $7 )
 ON CONFLICT ON CONSTRAINT tombstone_unique
 DO UPDATE SET table_id = tombstone.table_id
 RETURNING *;
         "#,
         )
         .bind(&table_id) // $1
-        .bind(&sequencer_id) // $2
-        .bind(&sequence_number) // $3
-        .bind(&min_time) // $4
-        .bind(&max_time) // $5
-        .bind(predicate) // $6
+        .bind(&sequencer_id.0) // $2
+        .bind(&sequencer_id.1) // $3
+        .bind(&sequence_number) // $4
+        .bind(&min_time) // $5
+        .bind(&max_time) // $6
+        .bind(predicate) // $7
         .fetch_one(&mut self.inner)
         .await
         .map_err(|e| {
@@ -1318,7 +1327,7 @@ SELECT
 FROM table_name
 INNER JOIN tombstone on tombstone.table_id = table_name.id
 WHERE table_name.namespace_id = $1;
-            "#,
+            "#, // xxx
         )
         .bind(&namespace_id) // $1
         .fetch_all(&mut self.inner)
@@ -1371,13 +1380,15 @@ WHERE id = $1;
             r#"
 SELECT *
 FROM tombstone
-WHERE sequencer_id = $1
-  AND sequence_number > $2
+WHERE kafka_topic_id = $1
+  AND kafka_partition = $2
+  AND sequence_number > $3
 ORDER BY id;
             "#,
         )
-        .bind(&sequencer_id) // $1
-        .bind(&sequence_number) // $2
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $2
+        .bind(&sequence_number) // $3
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })
@@ -1427,19 +1438,21 @@ WHERE id = ANY($1);
             r#"
 SELECT *
 FROM tombstone
-WHERE sequencer_id = $1
-  AND table_id = $2
-  AND sequence_number > $3
-  AND ((min_time <= $4 AND max_time >= $4)
-        OR (min_time > $4 AND min_time <= $5))
+WHERE kafka_topic_id = $1
+  AND kafka_partition = $2
+  AND table_id = $3
+  AND sequence_number > $4
+  AND ((min_time <= $5 AND max_time >= $5)
+        OR (min_time > $6 AND min_time <= $6))
 ORDER BY id;
             "#,
         )
-        .bind(&sequencer_id) // $1
-        .bind(&table_id) // $2
-        .bind(&sequence_number) // $3
-        .bind(&min_time) // $4
-        .bind(&max_time) // $5
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $2
+        .bind(&table_id) // $3
+        .bind(&sequence_number) // $4
+        .bind(&min_time) // $5
+        .bind(&max_time) // $6
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })
@@ -1469,27 +1482,28 @@ impl ParquetFileRepo for PostgresTxn {
         let rec = sqlx::query_as::<_, ParquetFile>(
             r#"
 INSERT INTO parquet_file (
-    sequencer_id, table_id, partition_id, object_store_id, min_sequence_number,
+    kafka_topic_id, kafka_partition, table_id, partition_id, object_store_id, min_sequence_number,
     max_sequence_number, min_time, max_time, file_size_bytes, parquet_metadata,
     row_count, compaction_level, created_at, namespace_id )
-VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14 )
+VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15 )
 RETURNING *;
         "#,
         )
-        .bind(sequencer_id) // $1
-        .bind(table_id) // $2
-        .bind(partition_id) // $3
-        .bind(object_store_id) // $4
-        .bind(min_sequence_number) // $5
-        .bind(max_sequence_number) // $6
-        .bind(min_time) // $7
-        .bind(max_time) // $8
-        .bind(file_size_bytes) // $9
-        .bind(parquet_metadata) // $10
-        .bind(row_count) // $11
-        .bind(compaction_level) // $12
-        .bind(created_at) // $13
-        .bind(namespace_id) // $14
+        .bind(sequencer_id.0) // $1
+        .bind(sequencer_id.1) // $2
+        .bind(table_id) // $3
+        .bind(partition_id) // $4
+        .bind(object_store_id) // $5
+        .bind(min_sequence_number) // $6
+        .bind(max_sequence_number) // $7
+        .bind(min_time) // $8
+        .bind(max_time) // $9
+        .bind(file_size_bytes) // $10
+        .bind(parquet_metadata) // $11
+        .bind(row_count) // $12
+        .bind(compaction_level) // $13
+        .bind(created_at) // $14
+        .bind(namespace_id) // $15
         .fetch_one(&mut self.inner)
         .await
         .map_err(|e| {
@@ -1527,17 +1541,19 @@ RETURNING *;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE sequencer_id = $1
-  AND max_sequence_number > $2
+WHERE kafka_topic_id = $1
+AND   kafka_partition = $2
+  AND max_sequence_number > $3
 ORDER BY id;
             "#,
         )
-        .bind(&sequencer_id) // $1
-        .bind(&sequence_number) // $2
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $2
+        .bind(&sequence_number) // $3
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })
@@ -1551,7 +1567,7 @@ ORDER BY id;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT parquet_file.id, parquet_file.sequencer_id, parquet_file.namespace_id,
+SELECT parquet_file.id, parquet_file.kafka_topic_id, parquet_file.kafka_partition, parquet_file.namespace_id,
        parquet_file.table_id, parquet_file.partition_id, parquet_file.object_store_id,
        parquet_file.min_sequence_number, parquet_file.max_sequence_number, parquet_file.min_time,
        parquet_file.max_time, parquet_file.to_delete, parquet_file.file_size_bytes,
@@ -1573,7 +1589,7 @@ WHERE table_name.namespace_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -1625,17 +1641,19 @@ RETURNING *;
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE parquet_file.sequencer_id = $1
+WHERE parquet_file.kafka_topic_id = $1
+  AND parquet_file.kafka_partition = $2
   AND parquet_file.compaction_level = 0
   AND parquet_file.to_delete IS NULL
   LIMIT 1000;
         "#,
         )
-        .bind(&sequencer_id) // $1
+        .bind(&sequencer_id.0) // $1
+        .bind(&sequencer_id.1) // $2
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })
@@ -1651,24 +1669,26 @@ WHERE parquet_file.sequencer_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
-WHERE parquet_file.sequencer_id = $1
-  AND parquet_file.table_id = $2
-  AND parquet_file.partition_id = $3
+WHERE parquet_file.kafka_topic_id = $1
+  AND parquet_file.kafka_partition = $2
+  AND parquet_file.table_id = $3
+  AND parquet_file.partition_id = $4
   AND parquet_file.compaction_level = 1
   AND parquet_file.to_delete IS NULL
-  AND ((parquet_file.min_time <= $4 AND parquet_file.max_time >= $4)
-      OR (parquet_file.min_time > $4 AND parquet_file.min_time <= $5));
+  AND ((parquet_file.min_time <= $5 AND parquet_file.max_time >= $5)
+      OR (parquet_file.min_time > $5 AND parquet_file.min_time <= $6));
         "#,
         )
-        .bind(&table_partition.sequencer_id) // $1
-        .bind(&table_partition.table_id) // $2
-        .bind(&table_partition.partition_id) // $3
-        .bind(min_time) // $4
-        .bind(max_time) // $5
+        .bind(&table_partition.sequencer_id.0) // $1
+        .bind(&table_partition.sequencer_id.1) // $2
+        .bind(&table_partition.table_id) // $3
+        .bind(&table_partition.partition_id) // $4
+        .bind(min_time) // $5
+        .bind(max_time) // $6
         .fetch_all(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })
@@ -1682,7 +1702,7 @@ WHERE parquet_file.sequencer_id = $1
         // `parquet_metadata` column!!
         sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -1784,18 +1804,20 @@ RETURNING id;
 SELECT count(*) as count
 FROM parquet_file
 WHERE table_id = $1
-  AND sequencer_id = $2
-  AND min_sequence_number < $3
+  AND kafka_topic_id = $2
+  AND kafka_partition = $3
+  AND min_sequence_number < $4
   AND parquet_file.to_delete IS NULL
-  AND ((parquet_file.min_time <= $4 AND parquet_file.max_time >= $4)
-  OR (parquet_file.min_time > $4 AND parquet_file.min_time <= $5));
+  AND ((parquet_file.min_time <= $5 AND parquet_file.max_time >= $5)
+  OR (parquet_file.min_time > $5 AND parquet_file.min_time <= $6));
             "#,
         )
         .bind(&table_id) // $1
-        .bind(&sequencer_id) // $2
-        .bind(sequence_number) // $3
-        .bind(min_time) // $4
-        .bind(max_time) // $5
+        .bind(&sequencer_id.0) // $2
+        .bind(&sequencer_id.1) // $3
+        .bind(sequence_number) // $4
+        .bind(min_time) // $5
+        .bind(max_time) // $6
         .fetch_one(&mut self.inner)
         .await
         .map_err(|e| Error::SqlxError { source: e })?;
@@ -1811,7 +1833,7 @@ WHERE table_id = $1
         // `parquet_metadata` column!!
         let rec = sqlx::query_as::<_, ParquetFile>(
             r#"
-SELECT id, sequencer_id, namespace_id, table_id, partition_id, object_store_id,
+SELECT id, kafka_topic_id, kafka_partition, namespace_id, table_id, partition_id, object_store_id,
        min_sequence_number, max_sequence_number, min_time, max_time, to_delete, file_size_bytes,
        row_count, compaction_level, created_at
 FROM parquet_file
@@ -2349,7 +2371,7 @@ mod tests {
             .repositories()
             .await
             .partitions()
-            .create_or_get(key, sequencers[0].id, table_id)
+            .create_or_get(key, sequencers[0].id(), table_id)
             .await
             .expect("should create OK");
 
@@ -2359,7 +2381,7 @@ mod tests {
             .repositories()
             .await
             .partitions()
-            .create_or_get(key, sequencers[1].id, table_id)
+            .create_or_get(key, sequencers[1].id(), table_id)
             .await
             .expect("result should not be evaluated");
 

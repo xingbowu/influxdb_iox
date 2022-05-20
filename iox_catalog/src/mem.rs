@@ -463,7 +463,8 @@ impl TableRepo for MemTxn {
                 .map(|t| t.sequence_number);
 
             return Ok(Some(TablePersistInfo {
-                sequencer_id,
+                kafka_topic_id: sequencer_id.0,
+                kafka_partition: sequencer_id.1,
                 table_id: table.id,
                 tombstone_max_sequence_number,
             }));
@@ -606,7 +607,6 @@ impl SequencerRepo for MemTxn {
             Some(t) => t,
             None => {
                 let sequencer = Sequencer {
-                    id: SequencerId::new(stage.sequencers.len() as i64 + 1),
                     kafka_topic_id: topic.id,
                     kafka_partition: partition,
                     min_unpersisted_sequence_number: 0,
@@ -659,7 +659,7 @@ impl SequencerRepo for MemTxn {
     ) -> Result<()> {
         let stage = self.stage();
 
-        if let Some(s) = stage.sequencers.iter_mut().find(|s| s.id == sequencer_id) {
+        if let Some(s) = stage.sequencers.iter_mut().find(|s| s.id() == sequencer_id) {
             s.min_unpersisted_sequence_number = sequence_number.get()
         };
 
