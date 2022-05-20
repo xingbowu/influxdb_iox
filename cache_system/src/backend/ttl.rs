@@ -52,7 +52,7 @@ impl<K, V> TtlProvider for NeverTtlProvider<K, V> {
     }
 }
 
-/// [`TtlProvider`] that returns a specific value
+/// [`TtlProvider`] that returns a specific duration value
 pub struct ValueTtlProvider<K, V>
 where
     K: 'static,
@@ -149,6 +149,55 @@ impl<K, V> TtlProvider for OptionalValueTtlProvider<K, V> {
         }
     }
 }
+
+
+/// [`TtlProvider`] that calls a user provided function to determine if an entry should be expired
+pub struct UserSpecifiedTTL<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    // phantom data that is Send and Sync, see https://stackoverflow.com/a/50201389
+    _k: PhantomData<fn() -> K>,
+    _v: PhantomData<fn() -> V>,
+
+    /// User provided function
+    ttl_function: Box<dyn Fn(&K, &V) -> Option<Duration> + Send + Sync>,
+}
+
+impl<K, V> UserSpecifiedTTL<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    /// Create new provider with the specified function for determining TTL
+    pub fn new(ttl_function: Box<dyn Fn(&K, &V) -> Option<Duration> + Send + Sync>) -> Self {
+        Self {
+            _k: PhantomData::default(),
+            _v: PhantomData::default(),
+            ttl_function,
+        }
+    }
+}
+
+impl<K, V> std::fmt::Debug for UserSpecifiedTTL<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserSpecifiedTTL")
+            .field("ttl_function", &"<func>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<K, V> TtlProvider for UserSpecifiedTTL<K, V> {
+    type K = K;
+    type V = V;
+
+    fn expires_in(&self, k: &Self::K, v: &Self::V) -> Option<Duration> {
+        (self.ttl_function)(k, v)
+    }
+}
+
+
 
 /// Cache backend that implements Time To Life.
 ///
