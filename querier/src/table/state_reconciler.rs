@@ -23,7 +23,7 @@ use std::{
 };
 
 use crate::{
-    cache::parquet_file::CachedParquetFile, chunk::ParquetChunkAdapter,
+    cache::parquet_file::CachedParquetFiles, chunk::ParquetChunkAdapter,
     tombstone::QuerierTombstone, IngesterPartition,
 };
 
@@ -63,7 +63,7 @@ impl Reconciler {
         &self,
         ingester_partitions: Vec<Arc<IngesterPartition>>,
         tombstones: Vec<Arc<Tombstone>>,
-        parquet_files: Vec<Arc<CachedParquetFile>>,
+        parquet_files: Arc<CachedParquetFiles>,
     ) -> Result<Vec<Arc<dyn QueryChunk>>, ReconcileError> {
         let tombstone_exclusion = tombstone_exclude_list(&ingester_partitions, &tombstones);
 
@@ -81,8 +81,7 @@ impl Reconciler {
                 .push(tombstone);
         }
 
-        //
-        let parquet_files = filter_parquet_files(&ingester_partitions, parquet_files)?;
+        let parquet_files = filter_parquet_files(&ingester_partitions, parquet_files.vec())?;
 
         debug!(
             ?parquet_files,
@@ -96,7 +95,7 @@ impl Reconciler {
         for cached_parquet_file in parquet_files {
             if let Some(chunk) = self
                 .chunk_adapter
-                .new_querier_chunk(&cached_parquet_file.file)
+                .new_querier_chunk(&cached_parquet_file)
                 .await
             {
                 parquet_chunks.push(chunk);

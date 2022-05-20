@@ -1,9 +1,8 @@
 //! Interface for reconciling Ingester and catalog state
 
-use crate::{cache::parquet_file::CachedParquetFile, ingester::IngesterPartition};
-use data_types::{
-    ParquetFileWithMetadata, PartitionId, SequenceNumber, SequencerId, Tombstone, TombstoneId,
-};
+use crate::ingester::IngesterPartition;
+use data_types::{PartitionId, SequenceNumber, SequencerId, Tombstone, TombstoneId};
+use parquet_file::chunk::DecodedParquetFile;
 use std::{ops::Deref, sync::Arc};
 
 /// Information about an ingester partition.
@@ -43,31 +42,17 @@ pub trait ParquetFileInfo {
     fn max_sequence_number(&self) -> SequenceNumber;
 }
 
-impl ParquetFileInfo for ParquetFileWithMetadata {
+impl ParquetFileInfo for Arc<DecodedParquetFile> {
     fn partition_id(&self) -> PartitionId {
-        self.partition_id
+        self.parquet_file.partition_id
     }
 
     fn min_sequence_number(&self) -> SequenceNumber {
-        self.min_sequence_number
+        self.parquet_file.min_sequence_number
     }
 
     fn max_sequence_number(&self) -> SequenceNumber {
-        self.max_sequence_number
-    }
-}
-
-impl ParquetFileInfo for Arc<CachedParquetFile> {
-    fn partition_id(&self) -> PartitionId {
-        self.file.parquet_file.partition_id
-    }
-
-    fn min_sequence_number(&self) -> SequenceNumber {
-        self.file.parquet_file.min_sequence_number
-    }
-
-    fn max_sequence_number(&self) -> SequenceNumber {
-        self.file.parquet_file.max_sequence_number
+        self.parquet_file.max_sequence_number
     }
 }
 

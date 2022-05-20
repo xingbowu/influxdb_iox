@@ -10,7 +10,7 @@ use cache_system::{
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
 };
-use data_types::{ParquetFileWithMetadata, TableId};
+use data_types::{ParquetFileWithMetadata, SequenceNumber, TableId};
 use iox_catalog::interface::Catalog;
 use iox_time::TimeProvider;
 use parquet_file::chunk::DecodedParquetFile;
@@ -38,18 +38,32 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug)]
 /// Holds decoded catalog information about a parquet file
-pub struct CachedParquetFile {
+pub struct CachedParquetFiles {
+    /// TODO maximum seen persisted parquet file
+
     /// Parquet catalog information and decoded metadata
-    pub file: DecodedParquetFile,
+    pub files: Arc<Vec<Arc<DecodedParquetFile>>>,
 }
 
-impl CachedParquetFile {
-    fn new(parquet_file_with_metadata: ParquetFileWithMetadata) -> Self {
+impl CachedParquetFiles {
+    fn new(parquet_files_with_metadata: Vec<ParquetFileWithMetadata>) -> Self {
+        let files: Vec<_> = parquet_files_with_metadata
+            .into_iter()
+            .map(DecodedParquetFile::new)
+            .map(Arc::new)
+            .collect();
+
         Self {
-            file: DecodedParquetFile::new(parquet_file_with_metadata),
+            files: Arc::new(files),
         }
     }
 
+    /// return the underying files as a new Vec
+    pub(crate) fn vec(&self) -> Vec<Arc<DecodedParquetFile>> {
+        self.files.as_ref().clone()
+    }
+
+    /// Estimate the memory consumption of this object and its contents
     fn size(&self) -> usize {
         // todo
         42
@@ -61,10 +75,10 @@ impl CachedParquetFile {
 /// DOES NOT CACHE the actual parquet bytes from object store
 #[derive(Debug)]
 pub struct ParquetFileCache {
-    cache: Cache<TableId, Vec<Arc<CachedParquetFile>>>,
+    cache: Cache<TableId, Arc<CachedParquetFiles>>,
 
     /// Handle that allows clearing entries for existing cache entries
-    backend: SharedBackend<TableId, Vec<Arc<CachedParquetFile>>>,
+    backend: SharedBackend<TableId, Arc<CachedParquetFiles>>,
 }
 
 impl ParquetFileCache {
@@ -87,19 +101,17 @@ impl ParquetFileCache {
                         // Ways this code could be more efficeints:
                         // 1. incrementally fetch only NEW parquet files
                         // 2. track time ranges needed for queries and limit files fetched
-                        let parquet_files: Vec<_> = catalog
+                        let parquet_files_with_metadata: Vec<_> = catalog
                             .repositories()
                             .await
                             .parquet_files()
                             .list_by_table_not_to_delete_with_metadata(table_id)
                             .await
-                            .context(CatalogSnafu)?
-                            .into_iter()
-                            .map(CachedParquetFile::new)
-                            .map(Arc::new)
-                            .collect();
+                            .context(CatalogSnafu)?;
 
-                        Ok(parquet_files) as std::result::Result<_, Error>
+                        Ok(Arc::new(CachedParquetFiles::new(
+                            parquet_files_with_metadata,
+                        ))) as std::result::Result<_, Error>
                     })
                     .await
                     .expect("retry forever")
@@ -125,13 +137,8 @@ impl ParquetFileCache {
             Arc::clone(&ram_pool),
             CACHE_ID,
             Arc::new(FunctionEstimator::new(
-                |k: &TableId, v: &Vec<Arc<CachedParquetFile>>| {
-                    RamSize(
-                        size_of_val(k)
-                            + size_of_val(v)
-                            + v.len()
-                            + v.iter().map(|f| size_of_val(f) + f.size()).sum::<usize>(),
-                    )
+                |k: &TableId, v: &Arc<CachedParquetFiles>| {
+                    RamSize(size_of_val(k) + size_of_val(v) + v.size())
                 },
             )),
         ));
@@ -145,13 +152,35 @@ impl ParquetFileCache {
     }
 
     /// Get list of cached parquet files, by table id
-    pub async fn get(&self, table_id: TableId) -> Vec<Arc<CachedParquetFile>> {
+    pub async fn get(&self, table_id: TableId) -> Arc<CachedParquetFiles> {
         self.cache.get(table_id).await
     }
 
     /// Mark the entry for table_id as expired (and needs a refresh)
     pub fn expire(&self, table_id: TableId) {
         self.backend.force_remove(&table_id)
+    }
+
+    /// Clear the parquet file cache if it does not know about data up
+    /// to max_parquet_sequence_number.
+    ///
+    /// If it does not know about max_parquet_sequence_number it means
+    /// the ingester has written new data to the catalog and we need
+    /// to update our knowledge of that.
+    ///
+    /// Returns true if the cache was cleared.
+    pub fn expire_if_unknown(
+        &self,
+        table_id: TableId,
+        max_parquet_sequence_number: Option<SequenceNumber>,
+    ) -> bool {
+        if let Some(max_parquet_sequence_number) = max_parquet_sequence_number {
+            unimplemented!("TODO make the get / remove part of the same lock hold");
+            self.backend.force_remove(&table_id);
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -219,20 +219,26 @@ impl QuerierTable {
             }
         }
 
+        let catalog_cache = self.chunk_adapter.catalog_cache();
+
         // figure out if the ingester has created new parquet files or
         // tombstones the querier doens't yet know about
         let max_parquet_sequence_number = partitions
             .iter()
-            .map(|p| p.parquet_max_sequence_number())
+            .flat_map(|p| p.parquet_max_sequence_number())
             .max();
 
-        let parquet_cache_outdated = false;
-        // if let Some(max_parquet_sequence_number) = max_parquet_sequence_number {
-        //     let expired = self.chunk_adapter().catalog_cache().parquet_file().expire_if_unknown(max_parquet_sequence_number);
-        //     if expired {
-        //         return Err(
+        let parquet_cache_outdated = catalog_cache
+            .parquet_file()
+            .expire_if_unknown(self.id, max_parquet_sequence_number);
+
+        let max_tombstone_sequence_number = partitions
+            .iter()
+            .flat_map(|p| p.tombstone_max_sequence_number())
+            .max();
 
         let tombstone_cache_outdated = false;
+        //.expire_tombstone_if_needed(max_tombstone_sequence_number);
 
         Ok(IngesterData {
             parquet_cache_outdated,
