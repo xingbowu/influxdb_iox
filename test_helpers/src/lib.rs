@@ -166,3 +166,32 @@ macro_rules! assert_error {
         );
     };
 }
+
+#[macro_export]
+/// Assert that `actual` and `expected` values are within `epsilon` of
+/// each other. Used to compare values that may fluctuate from run to run (e.g. because they encode timestamps)
+///
+/// Usage: assert_close!(actual, expected, epsilon);
+macro_rules! assert_close {
+    ($ACTUAL:expr, $EXPECTED:expr, $EPSILON:expr) => {{
+        {
+            let actual = $ACTUAL;
+            let expected = $EXPECTED;
+            let epsilon = $EPSILON;
+            // determine how far apart they actually are
+            let delta = if actual < expected {
+                expected - actual
+            } else {
+                actual - expected
+            };
+            assert!(
+                delta <= epsilon,
+                "{} and {} differ by {}, which is more than allowed {}",
+                actual,
+                expected,
+                delta,
+                epsilon
+            )
+        }
+    }};
+}

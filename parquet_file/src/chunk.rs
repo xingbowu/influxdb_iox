@@ -225,4 +225,17 @@ impl DecodedParquetFile {
             iox_metadata,
         }
     }
+
+    /// Estimate the memory consumption of this object and its contents
+    pub fn size(&self) -> usize {
+        // Note size_of_val is the size of the Azrc
+        // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=ae8fee8b4f7f5f013dc01ea1fda165da
+
+        self.parquet_file.size() +
+            // size of the Arc
+            mem::size_of_val(&self.parquet_metadata) +
+            self.parquet_metadata.size() +
+            self.decoded_metadata.size() +
+            self.iox_metadata.size()
+    }
 }
