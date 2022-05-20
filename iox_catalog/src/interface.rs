@@ -25,7 +25,11 @@ pub enum Error {
     NameExists { name: String },
 
     #[snafu(display("unhandled sqlx error: {}", source))]
-    SqlxError { source: sqlx::Error },
+    #[snafu(context(false))]
+    Sqlx {
+        source: sqlx::Error,
+        location: snafu::Location,
+    },
 
     #[snafu(display("foreign key violation: {}", source))]
     ForeignKeyViolation { source: sqlx::Error },

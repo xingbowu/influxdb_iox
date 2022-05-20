@@ -108,9 +108,7 @@ impl PostgresCatalog {
         options: PostgresConnectionOptions,
         metrics: Arc<metric::Registry>,
     ) -> Result<Self> {
-        let pool = new_pool(&options)
-            .await
-            .map_err(|e| Error::SqlxError { source: e })?;
+        let pool = new_pool(&options).await?;
 
         let schema_name = options.schema_name;
         Ok(Self {
@@ -239,7 +237,7 @@ impl TransactionFinalize for PostgresTxn {
                 .expect("Not yet finalized")
                 .commit()
                 .await
-                .map_err(|e| Error::SqlxError { source: e }),
+                .map_err(Into::into),
             PostgresTxnInner::Oneshot(_) => {
                 panic!("cannot commit oneshot");
             }
@@ -253,7 +251,7 @@ impl TransactionFinalize for PostgresTxn {
                 .expect("Not yet finalized")
                 .rollback()
                 .await
-                .map_err(|e| Error::SqlxError { source: e }),
+                .map_err(Into::into),
             PostgresTxnInner::Oneshot(_) => {
                 panic!("cannot abort oneshot");
             }
@@ -287,11 +285,7 @@ impl Catalog for PostgresCatalog {
     }
 
     async fn start_transaction(&self) -> Result<Box<dyn Transaction>, Error> {
-        let transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| Error::SqlxError { source: e })?;
+        let transaction = self.pool.begin().await?;
 
         Ok(Box::new(MetricDecorator::new(
             PostgresTxn {
@@ -515,8 +509,7 @@ RETURNING *;
         )
         .bind(&name) // $1
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(rec)
     }
@@ -537,7 +530,7 @@ WHERE name = $1;
             return Ok(None);
         }
 
-        let kafka_topic = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let kafka_topic = rec?;
 
         Ok(Some(kafka_topic))
     }
@@ -557,8 +550,7 @@ RETURNING *;
         )
         .bind(&name) // $1
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(rec)
     }
@@ -594,7 +586,7 @@ RETURNING *;
             } else if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })?;
 
@@ -609,8 +601,7 @@ FROM namespace;
             "#,
         )
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(rec)
     }
@@ -631,7 +622,7 @@ WHERE id = $1;
             return Ok(None);
         }
 
-        let namespace = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let namespace = rec?;
 
         Ok(Some(namespace))
     }
@@ -652,7 +643,7 @@ WHERE name = $1;
             return Ok(None);
         }
 
-        let namespace = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let namespace = rec?;
 
         Ok(Some(namespace))
     }
@@ -675,7 +666,7 @@ RETURNING *;
             sqlx::Error::RowNotFound => Error::NamespaceNotFound {
                 name: name.to_string(),
             },
-            _ => Error::SqlxError { source: e },
+            _ => Error::from(e),
         })?;
 
         Ok(namespace)
@@ -699,7 +690,7 @@ RETURNING *;
             sqlx::Error::RowNotFound => Error::NamespaceNotFound {
                 name: name.to_string(),
             },
-            _ => Error::SqlxError { source: e },
+            _ => Error::from(e),
         })?;
 
         Ok(namespace)
@@ -745,7 +736,7 @@ RETURNING *;
                 if is_fk_violation(&e) {
                     Error::ForeignKeyViolation { source: e }
                 } else {
-                    Error::SqlxError { source: e }
+                    Error::from(e)
                 }
             }
         })?;
@@ -769,7 +760,7 @@ WHERE id = $1;
             return Ok(None);
         }
 
-        let table = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let table = rec?;
 
         Ok(Some(table))
     }
@@ -795,7 +786,7 @@ WHERE namespace_id = $1 AND name = $2;
             return Ok(None);
         }
 
-        let table = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let table = rec?;
 
         Ok(Some(table))
     }
@@ -810,8 +801,7 @@ WHERE namespace_id = $1;
         )
         .bind(&namespace_id)
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(rec)
     }
@@ -819,8 +809,7 @@ WHERE namespace_id = $1;
     async fn list(&mut self) -> Result<Vec<Table>> {
         let rec = sqlx::query_as::<_, Table>("SELECT * FROM table_name;")
             .fetch_all(&mut self.inner)
-            .await
-            .map_err(|e| Error::SqlxError { source: e })?;
+            .await?;
 
         Ok(rec)
     }
@@ -859,7 +848,7 @@ LEFT JOIN (
             return Ok(None);
         }
 
-        let info = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let info = rec?;
 
         Ok(Some(info))
     }
@@ -903,7 +892,7 @@ RETURNING *;
             if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         }})?;
 
@@ -928,8 +917,7 @@ WHERE table_name.namespace_id = $1;
         )
         .bind(&namespace_id)
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(rec)
     }
@@ -937,8 +925,7 @@ WHERE table_name.namespace_id = $1;
     async fn list(&mut self) -> Result<Vec<Column>> {
         let rec = sqlx::query_as::<_, Column>("SELECT * FROM column_name;")
             .fetch_all(&mut self.inner)
-            .await
-            .map_err(|e| Error::SqlxError { source: e })?;
+            .await?;
 
         Ok(rec)
     }
@@ -974,7 +961,7 @@ RETURNING *;
             if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })?;
 
@@ -1024,7 +1011,7 @@ RETURNING *;;
             if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })
     }
@@ -1051,7 +1038,7 @@ WHERE kafka_topic_id = $1
             return Ok(None);
         }
 
-        let sequencer = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let sequencer = rec?;
 
         Ok(Some(sequencer))
     }
@@ -1060,7 +1047,7 @@ WHERE kafka_topic_id = $1
         sqlx::query_as::<_, Sequencer>(r#"SELECT * FROM sequencer;"#)
             .fetch_all(&mut self.inner)
             .await
-            .map_err(|e| Error::SqlxError { source: e })
+            .map_err(Into::into)
     }
 
     async fn list_by_kafka_topic(&mut self, topic: &KafkaTopic) -> Result<Vec<Sequencer>> {
@@ -1068,7 +1055,7 @@ WHERE kafka_topic_id = $1
             .bind(&topic.id) // $1
             .fetch_all(&mut self.inner)
             .await
-            .map_err(|e| Error::SqlxError { source: e })
+            .map_err(Into::into)
     }
 
     async fn update_min_unpersisted_sequence_number(
@@ -1084,7 +1071,7 @@ WHERE kafka_topic_id = $1
             .bind(&sequencer_id.1) // $3
         .execute(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        ?;
 
         Ok(())
     }
@@ -1119,7 +1106,7 @@ RETURNING *;
             if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })?;
 
@@ -1145,7 +1132,7 @@ RETURNING *;
             return Ok(None);
         }
 
-        let partition = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let partition = rec?;
 
         Ok(Some(partition))
     }
@@ -1158,7 +1145,7 @@ RETURNING *;
         .bind(&sequencer_id.1) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_namespace(&mut self, namespace_id: NamespaceId) -> Result<Vec<Partition>> {
@@ -1173,7 +1160,7 @@ WHERE table_name.namespace_id = $1;
         .bind(&namespace_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_table_id(&mut self, table_id: TableId) -> Result<Vec<Partition>> {
@@ -1187,7 +1174,7 @@ WHERE table_id = $1;
         .bind(&table_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn partition_info_by_id(
@@ -1205,8 +1192,7 @@ WHERE partition.id = $1;
         )
         .bind(&partition_id) // $1
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         let namespace_name = info.get("namespace_name");
         let table_name = info.get("table_name");
@@ -1245,7 +1231,7 @@ RETURNING *;
 
         let partition = rec.map_err(|e| match e {
             sqlx::Error::RowNotFound => Error::PartitionNotFound { id: partition_id },
-            _ => Error::SqlxError { source: e },
+            _ => Error::from(e),
         })?;
 
         Ok(partition)
@@ -1287,7 +1273,7 @@ RETURNING *;
             if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })?;
 
@@ -1332,7 +1318,7 @@ WHERE table_name.namespace_id = $1;
         .bind(&namespace_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_table(&mut self, table_id: TableId) -> Result<Vec<Tombstone>> {
@@ -1347,7 +1333,7 @@ ORDER BY id;
         .bind(&table_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn get_by_id(&mut self, id: TombstoneId) -> Result<Option<Tombstone>> {
@@ -1366,7 +1352,7 @@ WHERE id = $1;
             return Ok(None);
         }
 
-        let tombstone = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let tombstone = rec?;
 
         Ok(Some(tombstone))
     }
@@ -1391,7 +1377,7 @@ ORDER BY id;
         .bind(&sequence_number) // $3
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn remove(&mut self, tombstone_ids: &[TombstoneId]) -> Result<()> {
@@ -1407,8 +1393,7 @@ WHERE tombstone_id = ANY($1);
         )
         .bind(&ids[..]) // $1
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         // Remove tombstones
         sqlx::query(
@@ -1420,8 +1405,7 @@ WHERE id = ANY($1);
         )
         .bind(&ids[..]) // $1
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(())
     }
@@ -1455,7 +1439,7 @@ ORDER BY id;
         .bind(&max_time) // $6
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 }
 
@@ -1512,7 +1496,7 @@ RETURNING *;
             } else if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })?;
 
@@ -1526,8 +1510,7 @@ RETURNING *;
             .bind(&marked_at) // $1
             .bind(&id) // $2
             .execute(&mut self.inner)
-            .await
-            .map_err(|e| Error::SqlxError { source: e })?;
+            .await?;
 
         Ok(())
     }
@@ -1556,7 +1539,7 @@ ORDER BY id;
         .bind(&sequence_number) // $3
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_namespace_not_to_delete(
@@ -1581,7 +1564,7 @@ WHERE table_name.namespace_id = $1
         .bind(&namespace_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+.map_err(Into::into)
     }
 
     async fn list_by_table_not_to_delete(&mut self, table_id: TableId) -> Result<Vec<ParquetFile>> {
@@ -1599,7 +1582,7 @@ WHERE table_id = $1 AND to_delete IS NULL;
         .bind(&table_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_table_not_to_delete_with_metadata(
@@ -1616,7 +1599,7 @@ WHERE table_id = $1 AND to_delete IS NULL;
         .bind(&table_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn delete_old(&mut self, older_than: Timestamp) -> Result<Vec<ParquetFile>> {
@@ -1630,7 +1613,7 @@ RETURNING *;
         .bind(&older_than) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn level_0(&mut self, sequencer_id: SequencerId) -> Result<Vec<ParquetFile>> {
@@ -1656,7 +1639,7 @@ WHERE parquet_file.kafka_topic_id = $1
         .bind(&sequencer_id.1) // $2
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn level_1(
@@ -1691,7 +1674,7 @@ WHERE parquet_file.kafka_topic_id = $1
         .bind(max_time) // $6
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_partition_not_to_delete(
@@ -1713,7 +1696,7 @@ WHERE parquet_file.partition_id = $1
         .bind(&partition_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn list_by_partition_not_to_delete_with_metadata(
@@ -1731,7 +1714,7 @@ WHERE parquet_file.partition_id = $1
         .bind(&partition_id) // $1
         .fetch_all(&mut self.inner)
         .await
-        .map_err(|e| Error::SqlxError { source: e })
+        .map_err(Into::into)
     }
 
     async fn update_to_level_1(
@@ -1751,8 +1734,7 @@ RETURNING id;
         )
         .bind(&ids[..])
         .fetch_all(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         let updated = updated.into_iter().map(|row| row.get("id")).collect();
         Ok(updated)
@@ -1764,8 +1746,7 @@ RETURNING id;
         )
         .bind(&id) // $1
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(read_result.count > 0)
     }
@@ -1775,8 +1756,7 @@ RETURNING id;
             sqlx::query(r#"SELECT parquet_metadata FROM parquet_file WHERE id = $1;"#)
                 .bind(&id) // $1
                 .fetch_one(&mut self.inner)
-                .await
-                .map_err(|e| Error::SqlxError { source: e })?;
+                .await?;
 
         Ok(read_result.get("parquet_metadata"))
     }
@@ -1785,8 +1765,7 @@ RETURNING id;
         let read_result =
             sqlx::query_as::<_, Count>(r#"SELECT count(*) as count FROM parquet_file;"#)
                 .fetch_one(&mut self.inner)
-                .await
-                .map_err(|e| Error::SqlxError { source: e })?;
+                .await?;
 
         Ok(read_result.count)
     }
@@ -1819,8 +1798,7 @@ WHERE table_id = $1
         .bind(min_time) // $5
         .bind(max_time) // $6
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(read_result.count)
     }
@@ -1848,7 +1826,7 @@ WHERE object_store_id = $1;
             return Ok(None);
         }
 
-        let parquet_file = rec.map_err(|e| Error::SqlxError { source: e })?;
+        let parquet_file = rec?;
 
         Ok(Some(parquet_file))
     }
@@ -1881,7 +1859,7 @@ RETURNING *;
             } else if is_fk_violation(&e) {
                 Error::ForeignKeyViolation { source: e }
             } else {
-                Error::SqlxError { source: e }
+                Error::from(e)
             }
         })
     }
@@ -1902,8 +1880,7 @@ WHERE parquet_file_id = $1
         .bind(&parquet_file_id) // $1
         .bind(&tombstone_id) // $2
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(read_result.count > 0)
     }
@@ -1912,8 +1889,7 @@ WHERE parquet_file_id = $1
         let read_result =
             sqlx::query_as::<_, Count>(r#"SELECT count(*) as count FROM processed_tombstone;"#)
                 .fetch_one(&mut self.inner)
-                .await
-                .map_err(|e| Error::SqlxError { source: e })?;
+                .await?;
 
         Ok(read_result.count)
     }
@@ -1924,8 +1900,7 @@ WHERE parquet_file_id = $1
         )
         .bind(&tombstone_id) // $1
         .fetch_one(&mut self.inner)
-        .await
-        .map_err(|e| Error::SqlxError { source: e })?;
+        .await?;
 
         Ok(read_result.count)
     }
@@ -2660,6 +2635,6 @@ mod tests {
                 "test1" => ColumnType::Bool,
             ]
         },
-        want = Err(Error::SqlxError{ .. })
+        want = Err(Error::Sqlx{ .. })
     );
 }
