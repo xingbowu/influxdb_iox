@@ -35,11 +35,12 @@ pub async fn querier_namespace(ns: &Arc<TestNamespace>) -> QuerierNamespace {
     )
 }
 
-
-
 /// Given some tests create parquet files without an ingester to
 /// signal the need for a cache refresh, this function, explictly
 /// trigger the "refresh cache logic"
-pub fn clear_parquet_cache(querier_namespace: &QuerierNamespace,  table_id: TableId) {
-    querier_namespace.catalog_cache().parquet_file().expire(table_id);
+pub fn clear_parquet_cache(querier_namespace: &QuerierNamespace, table_id: TableId) {
+    querier_namespace
+        .catalog_cache()
+        .parquet_file()
+        .expire(table_id);
 }

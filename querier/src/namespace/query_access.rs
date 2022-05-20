@@ -188,7 +188,7 @@ impl ExecutionContextProvider for QuerierNamespace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::namespace::test_util::{querier_namespace, clear_parquet_cache};
+    use crate::namespace::test_util::{clear_parquet_cache, querier_namespace};
     use arrow::record_batch::RecordBatch;
     use arrow_util::{assert_batches_eq, assert_batches_sorted_eq};
     use data_types::ColumnType;

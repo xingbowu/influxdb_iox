@@ -5,7 +5,7 @@ use cache_system::{
     backend::{
         lru::{LruBackend, ResourcePool},
         resource_consumption::FunctionEstimator,
-        ttl::{TtlBackend, ValueTtlProvider},
+        ttl::{SharedBackend, TtlBackend, ValueTtlProvider},
     },
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
@@ -41,7 +41,6 @@ pub struct CachedTombstones {
     /// Tombstones that were cached in the catalog
     pub tombstones: Vec<Arc<Tombstone>>,
 }
-
 impl CachedTombstones {
     fn new(tombstones: Vec<Tombstone>) -> Self {
         let tombstones = tombstones.into_iter().map(Arc::new).collect();
@@ -63,6 +62,8 @@ impl CachedTombstones {
 #[derive(Debug)]
 pub struct TombstoneCache {
     cache: Cache<TableId, CachedTombstones>,
+    /// Handle that allows clearing entries for existing cache entries
+    backend: SharedBackend<TableId, CachedTombstones>,
 }
 
 impl TombstoneCache {
@@ -122,14 +123,21 @@ impl TombstoneCache {
             )),
         ));
 
-        let cache = Cache::new(loader, backend);
+        let backend = SharedBackend::new(backend);
 
-        Self { cache }
+        let cache = Cache::new(loader, Box::new(backend.clone()));
+
+        Self { cache, backend }
     }
 
     /// Get list of cached tombstones, by table id
     pub async fn tombstones(&self, table_id: TableId) -> Vec<Arc<Tombstone>> {
         self.cache.get(table_id).await.into_inner()
+    }
+
+    /// Mark the entry for table_id as expired / needs a refresh
+    pub fn expire(&self, table_id: TableId) {
+        self.backend.force_remove(&table_id)
     }
 }
 

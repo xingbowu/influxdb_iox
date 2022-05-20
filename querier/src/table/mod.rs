@@ -206,6 +206,24 @@ impl QuerierTable {
 
         Ok(partitions)
     }
+
+    /// clear the parquet file cache
+    #[cfg(test)]
+    fn clear_parquet_cache(&self) {
+        self.chunk_adapter
+            .catalog_cache()
+            .parquet_file()
+            .expire(self.id)
+    }
+
+    /// clear the tombstone cache
+    #[cfg(test)]
+    fn clear_tombstone_cache(&self) {
+        self.chunk_adapter
+            .catalog_cache()
+            .tombstone()
+            .expire(self.id)
+    }
 }
 
 #[cfg(test)]
@@ -336,6 +354,10 @@ mod tests {
             .create_tombstone(8, 1, 100, "foo=1")
             .await;
         tombstone2.mark_processed(&file112).await;
+
+        // As we have now made new parquet files, force a cache refresh
+        querier_table.clear_parquet_cache();
+        querier_table.clear_tombstone_cache();
 
         // now we have some files
         // this contains all files except for:
