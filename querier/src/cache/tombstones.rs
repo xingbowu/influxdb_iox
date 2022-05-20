@@ -131,7 +131,7 @@ impl TombstoneCache {
     }
 
     /// Get list of cached tombstones, by table id
-    pub async fn tombstones(&self, table_id: TableId) -> Vec<Arc<Tombstone>> {
+    pub async fn get(&self, table_id: TableId) -> Vec<Arc<Tombstone>> {
         self.cache.get(table_id).await.into_inner()
     }
 
@@ -170,7 +170,7 @@ mod tests {
             test_ram_pool(),
         );
 
-        let cached_tombstones = cache.tombstones(table1.table.id).await;
+        let cached_tombstones = cache.get(table1.table.id).await;
 
         assert_eq!(cached_tombstones.len(), 1);
         assert_eq!(cached_tombstones[0].as_ref(), &tombstone1.tombstone);

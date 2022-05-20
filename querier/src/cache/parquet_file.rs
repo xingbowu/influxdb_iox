@@ -145,7 +145,7 @@ impl ParquetFileCache {
     }
 
     /// Get list of cached parquet files, by table id
-    pub async fn files(&self, table_id: TableId) -> Vec<Arc<CachedParquetFile>> {
+    pub async fn get(&self, table_id: TableId) -> Vec<Arc<CachedParquetFile>> {
         self.cache.get(table_id).await
     }
 
@@ -185,7 +185,7 @@ mod tests {
             test_ram_pool(),
         );
 
-        let cached_files = cache.files(table1.table.id).await;
+        let cached_files = cache.get(table1.table.id).await;
 
         assert_eq!(cached_files.len(), 1);
         let (expected_parquet_file, _meta) = file.parquet_file.split_off_metadata();
