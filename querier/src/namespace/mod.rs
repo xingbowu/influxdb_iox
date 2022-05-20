@@ -36,9 +36,8 @@ pub struct QuerierNamespace {
     /// Executor for queries.
     exec: Arc<Executor>,
 
-    /// Connection to ingester
-    #[allow(dead_code)]
-    ingester_connection: Arc<dyn IngesterConnection>,
+    /// Catalog cache
+    catalog_cache: Arc<CatalogCache>,
 
     /// Query log.
     query_log: Arc<QueryLog>,
@@ -82,7 +81,7 @@ impl QuerierNamespace {
             name,
             tables: Arc::new(tables),
             exec,
-            ingester_connection,
+            catalog_cache: Arc::clone(chunk_adapter.catalog_cache()),
             query_log,
         }
     }
@@ -120,6 +119,12 @@ impl QuerierNamespace {
     /// Namespace name.
     pub fn name(&self) -> Arc<str> {
         Arc::clone(&self.name)
+    }
+
+    #[must_use]
+    /// Return the underlying catalog cache
+    pub fn catalog_cache(&self) -> &Arc<CatalogCache> {
+        &self.catalog_cache
     }
 }
 

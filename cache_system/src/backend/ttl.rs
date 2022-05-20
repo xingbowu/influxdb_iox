@@ -2,6 +2,7 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use iox_time::{Time, TimeProvider};
+use parking_lot::Mutex;
 
 use super::{addressable_heap::AddressableHeap, CacheBackend};
 
@@ -150,55 +151,6 @@ impl<K, V> TtlProvider for OptionalValueTtlProvider<K, V> {
     }
 }
 
-
-/// [`TtlProvider`] that calls a user provided function to determine if an entry should be expired
-pub struct UserSpecifiedTTL<K, V>
-where
-    K: 'static,
-    V: 'static,
-{
-    // phantom data that is Send and Sync, see https://stackoverflow.com/a/50201389
-    _k: PhantomData<fn() -> K>,
-    _v: PhantomData<fn() -> V>,
-
-    /// User provided function
-    ttl_function: Box<dyn Fn(&K, &V) -> Option<Duration> + Send + Sync>,
-}
-
-impl<K, V> UserSpecifiedTTL<K, V>
-where
-    K: 'static,
-    V: 'static,
-{
-    /// Create new provider with the specified function for determining TTL
-    pub fn new(ttl_function: Box<dyn Fn(&K, &V) -> Option<Duration> + Send + Sync>) -> Self {
-        Self {
-            _k: PhantomData::default(),
-            _v: PhantomData::default(),
-            ttl_function,
-        }
-    }
-}
-
-impl<K, V> std::fmt::Debug for UserSpecifiedTTL<K, V> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UserSpecifiedTTL")
-            .field("ttl_function", &"<func>")
-            .finish_non_exhaustive()
-    }
-}
-
-impl<K, V> TtlProvider for UserSpecifiedTTL<K, V> {
-    type K = K;
-    type V = V;
-
-    fn expires_in(&self, k: &Self::K, v: &Self::V) -> Option<Duration> {
-        (self.ttl_function)(k, v)
-    }
-}
-
-
-
 /// Cache backend that implements Time To Life.
 ///
 /// # Cache Eviction
@@ -321,6 +273,67 @@ where
 
     fn is_empty(&self) -> bool {
         self.inner_backend.is_empty()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self as &dyn Any
+    }
+}
+
+/// Cache backend that allows another backend to be shared by managing
+/// a mutex internally.
+///
+/// This allows explicitly removing entries from the cache, for
+/// example, based on a policy.
+#[derive(Debug, Clone)]
+pub struct SharedBackend<K, V>
+where
+    K: Clone + Eq + Debug + Hash + Ord + Send + 'static,
+    V: Clone + Debug + Send + 'static,
+{
+    inner_backend: Arc<Mutex<Box<dyn CacheBackend<K = K, V = V>>>>,
+}
+
+impl<K, V> SharedBackend<K, V>
+where
+    K: Clone + Eq + Debug + Hash + Ord + Send + 'static,
+    V: Clone + Debug + Send + 'static,
+{
+    /// Create new backend around the inner backend
+    pub fn new(inner_backend: Box<dyn CacheBackend<K = K, V = V>>) -> Self {
+        Self {
+            inner_backend: Arc::new(Mutex::new(inner_backend)),
+        }
+    }
+
+    /// Forceably "remove" a key (aka remove it from the shared backend)
+    pub fn force_remove(&self, k: &K) {
+        self.inner_backend.lock().remove(k)
+    }
+}
+
+impl<K, V> CacheBackend for SharedBackend<K, V>
+where
+    K: Clone + Eq + Debug + Hash + Ord + Send + 'static,
+    V: Clone + Debug + Send + 'static,
+{
+    type K = K;
+    type V = V;
+
+    fn get(&mut self, k: &Self::K) -> Option<Self::V> {
+        self.inner_backend.lock().get(k)
+    }
+
+    fn set(&mut self, k: Self::K, v: Self::V) {
+        self.inner_backend.lock().set(k, v);
+    }
+
+    fn remove(&mut self, k: &Self::K) {
+        self.inner_backend.lock().remove(k)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner_backend.lock().is_empty()
     }
 
     fn as_any(&self) -> &dyn Any {

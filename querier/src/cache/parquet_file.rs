@@ -5,7 +5,7 @@ use cache_system::{
     backend::{
         lru::{LruBackend, ResourcePool},
         resource_consumption::FunctionEstimator,
-        ttl::{TtlBackend, ValueTtlProvider},
+        ttl::{SharedBackend, TtlBackend, ValueTtlProvider},
     },
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
@@ -62,6 +62,9 @@ impl CachedParquetFile {
 #[derive(Debug)]
 pub struct ParquetFileCache {
     cache: Cache<TableId, Vec<Arc<CachedParquetFile>>>,
+
+    /// Handle that allows clearing entries for existing cache entries
+    backend: SharedBackend<TableId, Vec<Arc<CachedParquetFile>>>,
 }
 
 impl ParquetFileCache {
@@ -109,6 +112,7 @@ impl ParquetFileCache {
             metric_registry,
         ));
 
+        // entries expire after TTL
         let backend = Box::new(TtlBackend::new(
             Box::new(HashMap::new()),
             Arc::new(ValueTtlProvider::new(TTL)),
@@ -132,14 +136,22 @@ impl ParquetFileCache {
             )),
         ));
 
-        let cache = Cache::new(loader, backend);
+        // get a direct handle so we can clear out entries as needed
+        let backend = SharedBackend::new(backend);
 
-        Self { cache }
+        let cache = Cache::new(loader, Box::new(backend.clone()));
+
+        Self { cache, backend }
     }
 
     /// Get list of cached parquet files, by table id
     pub async fn files(&self, table_id: TableId) -> Vec<Arc<CachedParquetFile>> {
         self.cache.get(table_id).await
+    }
+
+    /// Mark the entry for table_id as expired (and needs a refresh)
+    pub fn expire(&self, table_id: TableId) {
+        self.backend.force_remove(&table_id)
     }
 }
 
@@ -178,10 +190,14 @@ mod tests {
         assert_eq!(cached_files.len(), 1);
         let (expected_parquet_file, _meta) = file.parquet_file.split_off_metadata();
         assert_eq!(cached_files[0].file.parquet_file, expected_parquet_file);
+
+        // TODO: validate a second request doens't result in a catalog request
     }
 
     // TODO tests for multiple tables
     // TODO tests for size
 
     // TODO tests for errors (table doesn't exist..)
+
+    // TODO: test expire logic
 }

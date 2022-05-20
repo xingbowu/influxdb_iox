@@ -188,10 +188,10 @@ impl ExecutionContextProvider for QuerierNamespace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::namespace::test_util::querier_namespace;
+    use crate::namespace::{test_util::querier_namespace, CatalogCache};
     use arrow::record_batch::RecordBatch;
     use arrow_util::{assert_batches_eq, assert_batches_sorted_eq};
-    use data_types::ColumnType;
+    use data_types::{ColumnType, TableId};
     use iox_query::frontend::sql::SqlQueryPlanner;
     use iox_tests::util::TestCatalog;
 
@@ -363,6 +363,8 @@ mod tests {
             .create_parquet_file_with_min_max("cpu,host=a load=14 10001", 2000, 2000, 10001, 10001)
             .await;
 
+        clear_parquet_cache(table_cpu.table.id, querier_namespace.catalog_cache());
+
         assert_query(
             &querier_namespace,
             "SELECT * FROM cpu", // no need `order by` because data is sorted before comparing in assert_query
@@ -404,6 +406,13 @@ mod tests {
             ],
         )
         .await;
+    }
+
+    /// Given the tests creates parquet files without an ingester to
+    /// signal cache mismatch, explictly trigger the "refresh cache
+    /// logic" here
+    fn clear_parquet_cache(table_id: TableId, catalog_cache: &CatalogCache) {
+        catalog_cache.parquet_file().expire(table_id);
     }
 
     async fn assert_query(
