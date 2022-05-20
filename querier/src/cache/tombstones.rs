@@ -10,7 +10,7 @@ use cache_system::{
     driver::Cache,
     loader::{metrics::MetricsLoader, FunctionLoader},
 };
-use data_types::{TableId, Tombstone};
+use data_types::{SequenceNumber, TableId, Tombstone};
 use iox_catalog::interface::Catalog;
 use iox_time::TimeProvider;
 use snafu::{ResultExt, Snafu};
@@ -55,6 +55,11 @@ impl CachedTombstones {
 
     fn into_inner(self) -> Vec<Arc<Tombstone>> {
         self.tombstones
+    }
+
+    /// Returns the greatest tombstone sequence number stored in this cache entry
+    pub(crate) fn max_tombstone_sequence_number(&self) -> Option<SequenceNumber> {
+        self.tombstones.iter().map(|f| f.sequence_number).max()
     }
 }
 
@@ -138,6 +143,36 @@ impl TombstoneCache {
     /// Mark the entry for table_id as expired / needs a refresh
     pub fn expire(&self, table_id: TableId) {
         self.backend.remove_if(&table_id, |_| true);
+    }
+
+    /// Clear the cache if it does not know about data up
+    /// to max_tombstone_sequence_number.
+    ///
+    /// If it does not know about max_tombstone_sequence_number it means
+    /// the ingester has written new data to the catalog and we need
+    /// to update our knowledge of that.
+    ///
+    /// Returns true if the cache was cleared.
+    pub fn expire_if_unknown(
+        &self,
+        table_id: TableId,
+        max_tombstone_sequence_number: Option<SequenceNumber>,
+    ) -> bool {
+        if let Some(max_tombstone_sequence_number) = max_tombstone_sequence_number {
+            // check backend cache to see if the maximum sequence
+            // number desired is less than what we know about
+            self.backend.remove_if(&table_id, |maybe_cached_file| {
+                let max_cached = maybe_cached_file.and_then(|f| f.max_tombstone_sequence_number());
+
+                if let Some(max_cached) = max_cached {
+                    max_cached < max_tombstone_sequence_number
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
     }
 }
 

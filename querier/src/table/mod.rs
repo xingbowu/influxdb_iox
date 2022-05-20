@@ -237,8 +237,9 @@ impl QuerierTable {
             .flat_map(|p| p.tombstone_max_sequence_number())
             .max();
 
-        let tombstone_cache_outdated = false;
-        //.expire_tombstone_if_needed(max_tombstone_sequence_number);
+        let tombstone_cache_outdated = catalog_cache
+            .tombstone()
+            .expire_if_unknown(self.id, max_tombstone_sequence_number);
 
         Ok(IngesterData {
             parquet_cache_outdated,

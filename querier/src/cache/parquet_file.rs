@@ -230,11 +230,11 @@ mod tests {
             test_ram_pool(),
         );
 
-        let cached_files = cache.get(table1.table.id).await;
+        let cached_files = cache.get(table1.table.id).await.vec();
 
         assert_eq!(cached_files.len(), 1);
         let (expected_parquet_file, _meta) = file.parquet_file.split_off_metadata();
-        assert_eq!(cached_files[0].file.parquet_file, expected_parquet_file);
+        assert_eq!(cached_files[0].parquet_file, expected_parquet_file);
 
         // TODO: validate a second request doens't result in a catalog request
     }
@@ -245,4 +245,5 @@ mod tests {
     // TODO tests for errors (table doesn't exist..)
 
     // TODO: test expire logic
+    // max persisted seuqence
 }
