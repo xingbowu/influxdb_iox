@@ -2438,7 +2438,7 @@ dependencies = [
  "futures",
  "k8s-openapi 0.14.0",
  "kube",
- "kube-derive 0.72.0",
+ "kube-derive",
  "kube-runtime",
  "parking_lot 0.11.2",
  "schemars",
@@ -2780,7 +2780,7 @@ dependencies = [
  "k8s-openapi 0.15.0",
  "kube-client 0.73.0",
  "kube-core 0.73.0",
- "kube-derive 0.73.0",
+ "kube-derive",
 ]
 
 [[package]]
@@ -2884,19 +2884,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "kube-derive"
-version = "0.72.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f19faefec284e5eec6680c74cd54d29823f38f0cf8811d54265877e1963996ad"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn",
 ]
 
 [[package]]
