@@ -2778,42 +2778,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60f11922081d37d1af75ae6b6b73b0b170ad169197c7a4a30e94e805ceff2a64"
 dependencies = [
  "k8s-openapi 0.15.0",
- "kube-client 0.73.0",
- "kube-core 0.73.0",
+ "kube-client",
+ "kube-core",
  "kube-derive",
-]
-
-[[package]]
-name = "kube-client"
-version = "0.72.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "625e8a89c79dd4e590217838f32274ccbb0f4ecc1db181f84aba3df635fca729"
-dependencies = [
- "base64 0.13.0",
- "bytes",
- "chrono",
- "dirs-next",
- "either",
- "futures",
- "http",
- "http-body",
- "hyper",
- "hyper-timeout",
- "jsonpath_lib",
- "k8s-openapi 0.14.0",
- "kube-core 0.72.0",
- "pem 1.0.2",
- "pin-project",
- "secrecy",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror",
- "tokio",
- "tokio-util 0.7.2",
- "tower",
- "tower-http",
- "tracing",
 ]
 
 [[package]]
@@ -2835,7 +2802,7 @@ dependencies = [
  "hyper-timeout",
  "jsonpath_lib",
  "k8s-openapi 0.15.0",
- "kube-core 0.73.0",
+ "kube-core",
  "pem 1.0.2",
  "pin-project",
  "rustls 0.20.6",
@@ -2854,23 +2821,6 @@ dependencies = [
 
 [[package]]
 name = "kube-core"
-version = "0.72.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0491dcd9adca79a96c63404aa978137f5fe1d3db5dcb6e5c0b073f915dbdd49d"
-dependencies = [
- "chrono",
- "form_urlencoded",
- "http",
- "json-patch",
- "k8s-openapi 0.14.0",
- "once_cell",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "kube-core"
 version = "0.73.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1eef68b0918b741d0cb20a54ffc06b197770584fa417180af4b398f848a381e6"
@@ -2878,6 +2828,7 @@ dependencies = [
  "chrono",
  "form_urlencoded",
  "http",
+ "json-patch",
  "k8s-openapi 0.15.0",
  "once_cell",
  "schemars",
@@ -2901,17 +2852,17 @@ dependencies = [
 
 [[package]]
 name = "kube-runtime"
-version = "0.72.0"
+version = "0.73.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb67002cbacd6cd99d1b1d0890785a84b6408158972f2561317bc4cdc06c981e"
+checksum = "cce6c2a4ae58f1610bbf639280110035ab2ac624af112b5239851c793e1af0c0"
 dependencies = [
  "ahash",
  "backoff 0.4.0",
  "derivative",
  "futures",
  "json-patch",
- "k8s-openapi 0.14.0",
- "kube-client 0.72.0",
+ "k8s-openapi 0.15.0",
+ "kube-client",
  "parking_lot 0.12.0",
  "pin-project",
  "serde",

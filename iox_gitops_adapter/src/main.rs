@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use futures::StreamExt;
 use kube::{api::ListParams, Api, Client as K8sClient};
-use kube_runtime::controller::{Action, Context, Controller};
+use kube_runtime::controller::{Action, Controller};
 use std::process::Command as Cmd;
 use thiserror::Error;
 use tracing::*;
@@ -207,7 +207,7 @@ async fn reconcile_topics(
 /// Controller triggers this whenever our main object or our children changed
 async fn reconcile<T>(
     topics: Arc<KafkaTopicList>,
-    ctx: Context<Data<T>>,
+    ctx: Arc<Data<T>>,
 ) -> Result<Action, CatalogError>
 where
     T: KafkaTopicListApi,
@@ -216,7 +216,7 @@ where
         "got a change to the kafka topic list custom resource: {:?}",
         topics.spec
     );
-    let kafka_topic_list_api = ctx.get_ref().kafka_topic_list_api.clone();
+    let kafka_topic_list_api = ctx.kafka_topic_list_api.clone();
     let topics = Arc::new(topics);
 
     // if CR doesn't contain status field, add it
@@ -255,8 +255,8 @@ where
 
     // call out to the iox CLI to update the catalog for each topic name in the list
     let reconcile_result = reconcile_topics(
-        &ctx.get_ref().path_to_iox_binary,
-        &ctx.get_ref().catalog_dsn,
+        &ctx.path_to_iox_binary,
+        &ctx.catalog_dsn,
         topics.spec.topics(),
     )
     .await;
@@ -315,7 +315,7 @@ where
 }
 
 /// an error handler that will be called when the reconciler fails
-fn error_policy<T>(error: &CatalogError, _ctx: Context<Data<T>>) -> Action
+fn error_policy<T>(error: &CatalogError, _ctx: Arc<Data<T>>) -> Action
 where
     T: KafkaTopicListApi,
 {
@@ -355,7 +355,7 @@ async fn main() {
         .run(
             reconcile,
             error_policy,
-            Context::new(Data {
+            Arc::new(Data {
                 path_to_iox_binary: config.iox_cli.clone(),
                 catalog_dsn: config.catalog_dsn.clone(),
                 kafka_topic_list_api: topics,
@@ -440,7 +440,7 @@ mod tests {
             1,
             create_topics_status(0, true, "".to_string(), now),
         );
-        let result = reconcile(Arc::new(c), Context::new(data)).await;
+        let result = reconcile(Arc::new(c), Arc::new(data)).await;
         // whole operation returns a successful result.
         result.unwrap();
         // ensure status was updated accordingly.
@@ -476,7 +476,7 @@ mod tests {
             1,
             create_topics_status(0, true, "".to_string(), now),
         );
-        let result = reconcile(Arc::new(c), Context::new(data)).await;
+        let result = reconcile(Arc::new(c), Arc::new(data)).await;
         // whole operation returns a successful result.
         result.unwrap();
         // ensure status was updated accordingly.
@@ -511,7 +511,7 @@ mod tests {
             1,
             create_topics_status(0, false, "".to_string(), now),
         );
-        let result = reconcile(Arc::new(c), Context::new(data)).await;
+        let result = reconcile(Arc::new(c), Arc::new(data)).await;
         // whole operation returns a successful result
         assert_matches!(result, Err(CatalogError::UpdateTopicError { .. }));
         // Ensure status was updated accordingly
