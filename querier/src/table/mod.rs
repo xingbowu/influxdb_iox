@@ -125,19 +125,21 @@ impl QuerierTable {
 
         let catalog_cache = self.chunk_adapter.catalog_cache();
 
-        // ask ingesters for data, optimistically fetching catalog contents at the same time
-        let (ingester_data, parquet_files, tombstones) = join!(
-            self.ingester_data(predicate),
+        // ask ingesters for data, also optimistically fetching catalog
+        // contents at the same time to pre-warm cache
+        let (partitions, _parquet_files, _tombstones) = join!(
+            self.ingester_partitions(predicate),
             catalog_cache.parquet_file().get(self.id()),
             catalog_cache.tombstone().get(self.id()),
         );
 
         // handle errors / cache refresh
-        let IngesterData {
-            parquet_cache_outdated,
-            tombstone_cache_outdated,
-            partitions,
-        } = ingester_data?;
+        let partitions = partitions?;
+
+        // figure out if the ingester has created new parquet files or
+        // tombstones the querier doens't yet know about
+        let (parquet_cache_outdated, tombstone_cache_outdated) = self.validate_caches(&partitions);
+
         debug!(
             namespace=%self.namespace_name,
             table_name=%self.table_name(),
@@ -147,21 +149,10 @@ impl QuerierTable {
             "Ingester partitions fetched"
         );
 
+        // Now fetch the actual contents of hte catalog we care need
         let (parquet_files, tombstones) = join!(
-            async move {
-                if parquet_cache_outdated {
-                    catalog_cache.parquet_file().get(self.id()).await
-                } else {
-                    parquet_files
-                }
-            },
-            async move {
-                if tombstone_cache_outdated {
-                    catalog_cache.tombstone().get(self.id()).await
-                } else {
-                    tombstones
-                }
-            },
+            catalog_cache.parquet_file().get(self.id()),
+            catalog_cache.tombstone().get(self.id())
         );
 
         self.reconciler
@@ -175,8 +166,8 @@ impl QuerierTable {
         Arc::new(QuerierTableChunkPruner {})
     }
 
-    /// Get partitions from ingesters,
-    async fn ingester_data(&self, predicate: &Predicate) -> Result<IngesterData> {
+    /// Get partitions from ingesters.
+    async fn ingester_partitions(&self, predicate: &Predicate) -> Result<Vec<IngesterPartition>> {
         // For now, ask for *all* columns in the table from the ingester (need
         // at least all pk (time, tag) columns for
         // deduplication.
@@ -219,10 +210,19 @@ impl QuerierTable {
             }
         }
 
-        let catalog_cache = self.chunk_adapter.catalog_cache();
+        Ok(partitions)
+    }
 
+    /// Handles invalidating parquet and tombstone caches if the
+    /// responses from the ingesters refer to newer parquet data or
+    /// tombstone data than is in the cache.
+    ///
+    /// Returns `(parquet_cache_outdated, tombstone_cache_outdated)`
+    fn validate_caches(&self, partitions: &[IngesterPartition]) -> (bool, bool) {
         // figure out if the ingester has created new parquet files or
         // tombstones the querier doens't yet know about
+        let catalog_cache = self.chunk_adapter.catalog_cache();
+
         let max_parquet_sequence_number = partitions
             .iter()
             .flat_map(|p| p.parquet_max_sequence_number())
@@ -241,11 +241,7 @@ impl QuerierTable {
             .tombstone()
             .expire_on_newly_persisted_files(self.id, max_tombstone_sequence_number);
 
-        Ok(IngesterData {
-            parquet_cache_outdated,
-            tombstone_cache_outdated,
-            partitions,
-        })
+        (parquet_cache_outdated, tombstone_cache_outdated)
     }
 
     /// clear the parquet file cache
@@ -265,22 +261,6 @@ impl QuerierTable {
             .tombstone()
             .expire(self.id)
     }
-}
-
-/// consolidated response from asking ingesters for data
-struct IngesterData {
-    /// Did the response refer newer parquet data than was
-    /// in the cache? If so the cache needs to be
-    /// refreshed.
-    pub parquet_cache_outdated: bool,
-
-    /// Did the response refer newer tombstone data than
-    /// was in the cache? If so the cache needs to be
-    /// refreshed.
-    pub tombstone_cache_outdated: bool,
-
-    /// The actual data
-    pub partitions: Vec<IngesterPartition>,
 }
 
 #[cfg(test)]
