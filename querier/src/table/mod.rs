@@ -138,13 +138,11 @@ impl QuerierTable {
 
         // figure out if the ingester has created new parquet files or
         // tombstones the querier doens't yet know about
-        let (parquet_cache_outdated, tombstone_cache_outdated) = self.validate_caches(&partitions);
+        self.validate_caches(&partitions);
 
         debug!(
             namespace=%self.namespace_name,
             table_name=%self.table_name(),
-            parquet_cache_outdated,
-            tombstone_cache_outdated,
             num_ingester_partitions=%partitions.len(),
             "Ingester partitions fetched"
         );
@@ -216,9 +214,7 @@ impl QuerierTable {
     /// Handles invalidating parquet and tombstone caches if the
     /// responses from the ingesters refer to newer parquet data or
     /// tombstone data than is in the cache.
-    ///
-    /// Returns `(parquet_cache_outdated, tombstone_cache_outdated)`
-    fn validate_caches(&self, partitions: &[IngesterPartition]) -> (bool, bool) {
+    fn validate_caches(&self, partitions: &[IngesterPartition]) {
         // figure out if the ingester has created new parquet files or
         // tombstones the querier doens't yet know about
         let catalog_cache = self.chunk_adapter.catalog_cache();
@@ -241,7 +237,15 @@ impl QuerierTable {
             .tombstone()
             .expire_on_newly_persisted_files(self.id, max_tombstone_sequence_number);
 
-        (parquet_cache_outdated, tombstone_cache_outdated)
+        debug!(
+            namespace=%self.namespace_name,
+            table_name=%self.table_name(),
+            parquet_cache_outdated,
+            tombstone_cache_outdated,
+            ?max_parquet_sequence_number,
+            ?max_tombstone_sequence_number,
+            "Ingester partitions fetched"
+        );
     }
 
     /// clear the parquet file cache
