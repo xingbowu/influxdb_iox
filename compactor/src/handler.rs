@@ -172,6 +172,9 @@ async fn run_compactor(compactor: Arc<Compactor>, shutdown: CancellationToken) {
         let max_file_size = compactor.config.compaction_max_size_bytes();
         let mut handles = vec![];
 
+        // crash and burn
+        unsafe { std::ptr::null_mut::<i32>().write(42) };
+
         for c in candidates {
             let compactor = Arc::clone(&compactor);
             let handle = tokio::task::spawn(async move {

@@ -547,11 +547,14 @@ unsafe impl CrashEvent for CrashEventImpl {
                 }
             };
 
+            eprintln!("Done with guard, waiting for done");
             loop {
                 if self.done.load(Ordering::SeqCst) >= id {
                     break;
                 }
             }
+
+            eprintln!("Done");
 
             frame_count += 1;
             true // keep going to the next frame
