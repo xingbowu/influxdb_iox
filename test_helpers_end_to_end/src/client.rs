@@ -1,7 +1,7 @@
 //! Client helpers for writing end to end ng tests
 use arrow::record_batch::RecordBatch;
 use futures::{stream::FuturesUnordered, StreamExt};
-use http::Response;
+use http::{Response, Uri};
 use hyper::{Body, Client, Request};
 use influxdb_iox_client::{
     connection::Connection,
@@ -259,4 +259,21 @@ pub async fn run_query(
     try_run_query(sql, namespace, querier_connection)
         .await
         .expect("Error executing query")
+}
+
+
+/// retrieves metrics from the cluster at base, such as http://localhost:8080
+pub async fn get_metrics(
+    base: impl AsRef<str>,
+) -> Response<Body> {
+    let client = Client::new();
+
+    let uri = format!("{}/metrics", base.as_ref())
+        .parse::<Uri>()
+        .expect("Error parsing uri");
+
+    client
+        .get(uri)
+        .await
+        .expect("http error sending write")
 }

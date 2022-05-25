@@ -1,9 +1,12 @@
 pub(crate) mod influxrpc;
 mod multi_ingester;
 
+use std::time::Duration;
+
 use assert_cmd::Command;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use predicates::prelude::*;
+use test_helpers::timeout::FutureTimeout;
 use test_helpers_end_to_end::{
     maybe_skip_integration, try_run_query, MiniCluster, Step, StepTest, StepTestState, TestConfig,
 };
@@ -205,6 +208,75 @@ async fn query_after_persist_sees_new_files() {
     )
     .run()
     .await
+}
+
+
+#[tokio::test]
+async fn cached_catalog_access() {
+    // Ensures that queries don't access the catalog each time
+    test_helpers::maybe_start_logging();
+
+    let database_url = maybe_skip_integration!();
+
+    let table_name = "the_table";
+
+    // Set up the cluster  ====================================
+    let mut cluster = MiniCluster::create_shared(database_url).await;
+
+    StepTest::new(
+        &mut cluster,
+        vec![
+            // Write data to a parquet file
+            Step::WriteLineProtocol(format!(
+                "{},tag=A val=100 2\n",
+                table_name
+            )),
+            Step::WaitForReadable,
+            Step::Query {
+                sql: format!("select count(*) from {}", table_name),
+                expected: vec![
+                    "+-----------------+",
+                    "| COUNT(UInt8(1)) |",
+                    "+-----------------+",
+                    "| 1               |",
+                    "+-----------------+",
+                ],
+            },
+            Step::Custom(Box::new(move |state: &mut StepTestState| {
+                let cluster = state.cluster();
+
+                check_metrics(cluster)
+                    .with_timeout_panic(Duration::from_secs(10))
+                    .boxed()
+            })),
+            // second query, same result should not have accessed the catalog
+            Step::Query {
+                sql: format!("select count(*) from {}", table_name),
+                expected: vec![
+                    "+-----------------+",
+                    "| COUNT(UInt8(1)) |",
+                    "+-----------------+",
+                    "| 1               |",
+                    "+-----------------+",
+                ],
+            },
+        ],
+    )
+    .run()
+    .await
+}
+
+
+async fn check_metrics(cluster: &MiniCluster) {
+    let metrics = cluster
+        .get_metrics()
+        .await;
+
+    let lines: Vec<_> = metrics
+        .split('\n')
+        .collect();
+
+    println!("AAL lines: {:#?}", lines);
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 use crate::{
-    rand_id, write_to_router, write_to_router_grpc, ServerFixture, TestConfig, TestServer,
+    rand_id, write_to_router, write_to_router_grpc, ServerFixture, TestConfig, TestServer, get_metrics,
 };
 use futures::{stream::FuturesOrdered, StreamExt};
 use http::Response;
@@ -251,6 +251,28 @@ impl MiniCluster {
             self.router().router_grpc_connection(),
         )
         .await
+    }
+
+    /// Gets metrics for this router, as a single string (prometheus
+    /// format), panic'ing on error
+    pub async fn get_metrics(
+        &self,
+    ) -> String {
+        get_metrics(self.router().router_http_base())
+            .await
+            // get the underlying tonic body
+            .into_body()
+            // capture all the streaming bytes
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            // check for error
+            .collect::<Result<Vec<_>, _>>()
+            .expect("Error getting body")
+            .into_iter()
+            .map(|b|String::from_utf8_lossy(&b).chars().collect::<Vec<_>>())
+            .flatten()
+            .collect::<String>()
     }
 
     /// Get a reference to the mini cluster's other servers.
