@@ -175,7 +175,9 @@ impl TombstoneCache {
                 if let Some(max_cached) = max_cached {
                     max_cached < max_tombstone_sequence_number
                 } else {
-                    false
+                    // a max sequence was provided but there were no
+                    // files in the cache. Means we need to refresh
+                    true
                 }
             })
         } else {
