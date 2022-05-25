@@ -72,6 +72,14 @@ pub enum Step {
     /// endpoint, assert the data was written successfully
     WriteLineProtocol(String),
 
+    /// Send the specified delete predicate and time bounds, and
+    /// assert the request succeeded
+    Delete {
+        predicate: String,
+        start: u64,
+        stop: u64,
+    },
+
     /// Writes the specified `TableBatch`es to the gRPC write API
     WriteTableBatches(Vec<TableBatch>),
 
@@ -147,6 +155,21 @@ impl<'a> StepTest<'a> {
                     assert_eq!(response.status(), StatusCode::NO_CONTENT);
                     let write_token = get_write_token(&response);
                     info!("====Done writing line protocol, got token {}", write_token);
+                    state.write_tokens.push(write_token);
+                }
+                Step::Delete {
+                    predicate,
+                    start,
+                    stop,
+                } => {
+                    info!(
+                        "====Begin deleting via the v2 HTTP API: predicate '{}', start '{}', stop '{}",
+                        predicate, start, stop
+                    );
+                    let response = state.cluster.delete_to_router(predicate, start, stop).await;
+                    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+                    let write_token = get_write_token(&response);
+                    info!("====Done deleting protocol, got token {}", write_token);
                     state.write_tokens.push(write_token);
                 }
                 Step::WriteTableBatches(table_batches) => {

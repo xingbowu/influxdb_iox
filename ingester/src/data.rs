@@ -840,6 +840,11 @@ impl TableData {
         let min_time = Timestamp::new(predicate.range.start());
         let max_time = Timestamp::new(predicate.range.end());
 
+        debug!(%table_name,
+               sequence_number=%sequence_number.get(),
+               ?predicate,
+               "buffering table delete");
+
         let mut repos = catalog.repositories().await;
         let tombstone = repos
             .tombstones()

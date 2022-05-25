@@ -1,5 +1,6 @@
 use crate::{
-    rand_id, write_to_router, write_to_router_grpc, ServerFixture, TestConfig, TestServer,
+    delete_to_router, rand_id, write_to_router, write_to_router_grpc, ServerFixture, TestConfig,
+    TestServer,
 };
 use futures::{stream::FuturesOrdered, StreamExt};
 use http::Response;
@@ -249,6 +250,24 @@ impl MiniCluster {
             table_batches,
             &self.namespace,
             self.router().router_grpc_connection(),
+        )
+        .await
+    }
+
+    /// Sends the delete to the router
+    pub async fn delete_to_router(
+        &self,
+        predicate: impl Into<String>,
+        start: u64,
+        stop: u64,
+    ) -> Response<Body> {
+        delete_to_router(
+            predicate,
+            start,
+            stop,
+            &self.org_id,
+            &self.bucket_id,
+            self.router().router_http_base(),
         )
         .await
     }

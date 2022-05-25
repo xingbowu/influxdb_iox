@@ -1,11 +1,15 @@
 pub(crate) mod influxrpc;
 mod multi_ingester;
 
+use std::time::Duration;
+
 use assert_cmd::Command;
 use futures::FutureExt;
 use predicates::prelude::*;
+use test_helpers::timeout::FutureTimeout;
 use test_helpers_end_to_end::{
-    maybe_skip_integration, try_run_query, MiniCluster, Step, StepTest, StepTestState, TestConfig,
+    maybe_skip_integration, run_query, try_run_query, MiniCluster, Step, StepTest, StepTestState,
+    TestConfig,
 };
 
 #[tokio::test]
@@ -69,6 +73,88 @@ async fn basic_on_parquet() {
                     "+------+------+--------------------------------+-----+",
                     "| A    | B    | 1970-01-01T00:00:00.000123456Z | 42  |",
                     "+------+------+--------------------------------+-----+",
+                ],
+            },
+        ],
+    )
+    .run()
+    .await
+}
+
+#[tokio::test]
+async fn basic_delete() {
+    test_helpers::maybe_start_logging();
+    let database_url = maybe_skip_integration!();
+
+    let table_name = "the_table";
+
+    // Set up the cluster  ====================================
+    let mut cluster = MiniCluster::create_shared(database_url).await;
+
+    let sql = format!("select * from {}", table_name);
+
+    StepTest::new(
+        &mut cluster,
+        vec![
+            Step::WriteLineProtocol(format!("{},tag1=A,tag2=B val=42i 123456", table_name)),
+            Step::WriteLineProtocol(format!("{},tagA=X,tag2=Y val=42i 123457", table_name)),
+            Step::WaitForReadable,
+            Step::Query {
+                sql: sql.clone(),
+                expected: vec![
+                    "+------+------+------+--------------------------------+-----+",
+                    "| tag1 | tag2 | tagA | time                           | val |",
+                    "+------+------+------+--------------------------------+-----+",
+                    "|      | Y    | X    | 1970-01-01T00:00:00.000123457Z | 42  |",
+                    "| A    | B    |      | 1970-01-01T00:00:00.000123456Z | 42  |",
+                    "+------+------+------+--------------------------------+-----+",
+                ],
+            },
+            // now delete the data
+            Step::Delete {
+                predicate: format!(r#"_measurement = "{}" AND tag1="A""#, table_name),
+                start: 0,
+                stop: 1000000,
+            },
+            // Wait for delete to be readable
+            //Step::WaitForReadable,
+            // workaround the lack of write token for a delete
+            // https://github.com/influxdata/influxdb_iox/issues/4209
+            // TODO file a ticket to add deletes to write token
+            Step::Custom(Box::new(move |state: &mut StepTestState| {
+                let cluster = state.cluster();
+
+                // query in a loop until the delete is visible
+                async move {
+                    loop {
+                        let batches = run_query(
+                            &sql,
+                            cluster.namespace(),
+                            cluster.querier().querier_grpc_connection(),
+                        )
+                        .await;
+                        let num_rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
+                        if num_rows == 1 {
+                            return;
+                        } else {
+                            println!("Got {} rows, waiting for 1", num_rows);
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                    }
+                }
+                .with_timeout_panic(Duration::from_secs(10))
+                .boxed()
+            })),
+            // row should be gone now
+            Step::Query {
+                sql: format!("select * from {}", table_name),
+                expected: vec![
+                    "+------+------+------+--------------------------------+-----+",
+                    "| tag1 | tag2 | tagA | time                           | val |",
+                    "+------+------+------+--------------------------------+-----+",
+                    "|      | Y    | X    | 1970-01-01T00:00:00.000123457Z | 42  |",
+                    "| A    | B    |      | 1970-01-01T00:00:00.000123456Z | 42  |",
+                    "+------+------+------+--------------------------------+-----+",
                 ],
             },
         ],

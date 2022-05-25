@@ -10,6 +10,7 @@ use influxdb_iox_client::{
     write_info::generated_types::{merge_responses, GetWriteInfoResponse, KafkaPartitionStatus},
 };
 use observability_deps::tracing::info;
+use serde::Serialize;
 use std::time::Duration;
 
 /// Writes the line protocol to the write_base/api/v2/write endpoint (typically on the router)
@@ -37,6 +38,58 @@ pub async fn write_to_router(
         .request(request)
         .await
         .expect("http error sending write")
+}
+
+/// Example request:
+/// ```text
+/// {"predicate":"_measurement=mytable AND host=\"Orient.local\"","start":"1970-01-01T00:00:00Z","stop":"2070-01-02T00:00:00Z"}
+/// {"predicate":"_measurement=mytable AND host=\"Orient.local\"","start":"100","stop":"200"}
+/// ```
+#[derive(Serialize)]
+pub struct DeleteRequest {
+    predicate: String,
+    start: String,
+    stop: String,
+}
+
+/// Sends the delete protocol to the write_base/api/v2/write endpoint (typically on the router)
+/// ///   {"predicate":"_measurement=mytable AND host=\"Orient.local\"","start":"1970-01-01T00:00:00Z","stop":"2070-01-02T00:00:00Z"}
+pub async fn delete_to_router(
+    predicate: impl Into<String>,
+    start: u64,
+    stop: u64,
+    org: impl AsRef<str>,
+    bucket: impl AsRef<str>,
+    write_base: impl AsRef<str>,
+) -> Response<Body> {
+    let client = Client::new();
+    let url = format!(
+        "{}/api/v2/delete?org={}&bucket={}",
+        write_base.as_ref(),
+        org.as_ref(),
+        bucket.as_ref()
+    );
+
+    let request = DeleteRequest {
+        predicate: predicate.into(),
+        start: start.to_string(),
+        stop: stop.to_string(),
+    };
+
+    let body = serde_json::to_string(&request).expect("error serializating request");
+    info!("Sending delete request:\n{:#?}", body);
+    let body = Body::from(body);
+
+    let request = Request::builder()
+        .uri(url)
+        .method("POST")
+        .body(body)
+        .expect("failed to construct HTTP request");
+
+    client
+        .request(request)
+        .await
+        .expect("http error sending delete")
 }
 
 /// Writes the table batch to the gRPC write API on the router into the org/bucket (typically on
