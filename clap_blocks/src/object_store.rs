@@ -568,10 +568,11 @@ mod tests {
         ])
         .unwrap();
 
-        let object_store = make_object_store(&config).unwrap();
+        let object_store = make_object_store(&config).unwrap().to_string();
         assert_eq!(
-            object_store.to_string(),
-            format!("LocalFileSystem({})", root_path)
+            object_store.starts_with("LocalFileSystem"),
+            "{}",
+            object_store
         )
     }
 
