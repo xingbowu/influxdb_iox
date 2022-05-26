@@ -245,7 +245,7 @@ fn download_and_scan_parquet(
     let file = match read_stream {
         GetResult::File(f, _) => {
             trace!(?path, "Using file directly");
-            futures::executor::block_on(f.into_std())
+            f
         }
         GetResult::Stream(read_stream) => {
             // read parquet file to local file

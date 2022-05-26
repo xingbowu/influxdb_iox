@@ -1,5 +1,6 @@
 //! A metric instrumentation wrapper over [`ObjectStore`] implementations.
 
+use std::ops::Range;
 use std::sync::Arc;
 use std::{
     marker::PhantomData,
@@ -190,7 +191,7 @@ impl ObjectStore for ObjectStoreMetrics {
         match res {
             Ok(GetResult::File(file, path)) => {
                 // Record the file size in bytes and time the inner call took.
-                if let Ok(m) = file.metadata().await {
+                if let Ok(m) = file.metadata() {
                     self.get_bytes.inc(m.len());
                     if let Some(d) = self.time_provider.now().checked_duration_since(started_at) {
                         self.get_success_duration_ms.record(d.as_millis() as _)
@@ -222,6 +223,11 @@ impl ObjectStore for ObjectStoreMetrics {
         }
     }
 
+    async fn get_range(&self, location: &Path, range: Range<usize>) -> Result<Bytes> {
+        // TODO: Add instrumentation of head requests
+        self.inner.get_range(location, range).await
+    }
+
     async fn head(&self, location: &Path) -> Result<ObjectMeta> {
         // TODO: Add instrumentation of head requests
         self.inner.head(location).await
@@ -246,10 +252,7 @@ impl ObjectStore for ObjectStoreMetrics {
         res
     }
 
-    async fn list<'a>(
-        &'a self,
-        prefix: Option<&'a Path>,
-    ) -> Result<BoxStream<'a, Result<ObjectMeta>>> {
+    async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
         let started_at = self.time_provider.now();
 
         let res = self.inner.list(prefix).await;
@@ -279,7 +282,7 @@ impl ObjectStore for ObjectStoreMetrics {
         }
     }
 
-    async fn list_with_delimiter(&self, prefix: &Path) -> Result<ListResult> {
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
         let t = self.time_provider.now();
 
         let res = self.inner.list_with_delimiter(prefix).await;
@@ -519,7 +522,7 @@ mod tests {
 
     use futures::stream;
     use metric::Attributes;
-    use tokio::io::AsyncReadExt;
+    use std::io::Read;
 
     use dummy::DummyObjectStore;
     use object_store::{local::LocalFileSystem, memory::InMemory};
@@ -566,7 +569,7 @@ mod tests {
 
         store
             .put(
-                &Path::from_raw("test"),
+                &Path::from("test"),
                 Bytes::from([42_u8, 42, 42, 42, 42].as_slice()),
             )
             .await
@@ -589,7 +592,7 @@ mod tests {
 
         store
             .put(
-                &Path::from_raw("test"),
+                &Path::from("test"),
                 Bytes::from([42_u8, 42, 42, 42, 42].as_slice()),
             )
             .await
@@ -643,7 +646,7 @@ mod tests {
         let store = ObjectStoreMetrics::new(store, time, &metrics);
 
         store
-            .list_with_delimiter(&Path::from_raw("test"))
+            .list_with_delimiter(Some(&Path::from("test")))
             .await
             .expect("list should succeed");
 
@@ -663,7 +666,7 @@ mod tests {
 
         assert!(
             store
-                .list_with_delimiter(&Path::from_raw("test"))
+                .list_with_delimiter(Some(&Path::from("test")))
                 .await
                 .is_err(),
             "mock configured to fail"
@@ -684,7 +687,7 @@ mod tests {
         let store = ObjectStoreMetrics::new(store, time, &metrics);
 
         store
-            .get(&Path::from_raw("test"))
+            .get(&Path::from("test"))
             .await
             .expect_err("mock configured to fail");
 
@@ -698,12 +701,12 @@ mod tests {
     #[tokio::test]
     async fn test_put_get_delete_file() {
         let metrics = Arc::new(metric::Registry::default());
-        let store = Arc::new(LocalFileSystem::new("./"));
+        let store = Arc::new(LocalFileSystem::new_with_prefix("./").unwrap());
         let time = Arc::new(SystemProvider::new());
         let store = ObjectStoreMetrics::new(store, time, &metrics);
 
         let data = [42_u8, 42, 42, 42, 42];
-        let path = Path::from_raw("test");
+        let path = Path::from("test");
         store
             .put(&path, Bytes::copy_from_slice(&data))
             .await
@@ -714,7 +717,6 @@ mod tests {
             GetResult::File(mut file, _) => {
                 let mut contents = vec![];
                 file.read_to_end(&mut contents)
-                    .await
                     .expect("failed to read file data");
                 assert_eq!(contents, &data);
             }
@@ -748,7 +750,7 @@ mod tests {
         let store = ObjectStoreMetrics::new(store, time, &metrics);
 
         let data = [42_u8, 42, 42, 42, 42];
-        let path = Path::from_raw("test");
+        let path = Path::from("test");
         store
             .put(&path, Bytes::copy_from_slice(&data))
             .await

@@ -19,6 +19,12 @@ pub enum ParseError {
         source: std::io::Error,
     },
 
+    #[snafu(display("Unable to create local store {:?}: {}", path, source))]
+    CreateLocalFileSystem {
+        path: PathBuf,
+        source: object_store::Error,
+    },
+
     #[snafu(display(
         "Specified {:?} for the object store, required configuration missing for {}",
         object_store,
@@ -369,7 +375,10 @@ pub fn make_object_store(config: &ObjectStoreConfig) -> Result<Arc<DynObjectStor
             Some(db_dir) => {
                 fs::create_dir_all(db_dir)
                     .context(CreatingDatabaseDirectorySnafu { path: db_dir })?;
-                Ok(Arc::new(object_store::local::LocalFileSystem::new(&db_dir)))
+
+                let store = object_store::local::LocalFileSystem::new_with_prefix(db_dir)
+                    .context(CreateLocalFileSystemSnafu { path: db_dir })?;
+                Ok(Arc::new(store))
             }
             None => MissingObjectStoreConfigSnafu {
                 object_store: ObjectStoreType::File,
